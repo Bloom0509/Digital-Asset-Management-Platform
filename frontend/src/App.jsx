@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
 import './App.css'
 
-type Asset = { name: string; type: string; size: string; color: string; updated: string }
-
-const demoAssets: Asset[] = [
+const demoAssets = [
   { name: 'Aurora campaign', type: 'JPG', size: '4.8 MB', color: 'coral', updated: '2 min ago' },
   { name: 'Product launch reel', type: 'MP4', size: '182 MB', color: 'blue', updated: '18 min ago' },
   { name: 'Editorial still life', type: 'PNG', size: '8.2 MB', color: 'green', updated: '1 hr ago' },
@@ -18,17 +15,17 @@ function App() {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [filter, setFilter] = useState('all')
-  const [view, setView] = useState<'grid' | 'list'>('grid')
-  const [selected, setSelected] = useState<string[]>([])
-  const [starred, setStarred] = useState<string[]>([])
+  const [view, setView] = useState('grid')
+  const [selected, setSelected] = useState([])
+  const [starred, setStarred] = useState([])
   const [notice, setNotice] = useState('')
-  const [menu, setMenu] = useState<string | null>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
+  const [menu, setMenu] = useState(null)
+  const fileInput = useRef(null)
 
   useEffect(() => {
     fetch('/api/assets/')
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data: Asset[]) => setAssets(data))
+      .then((data) => setAssets(data))
       .catch(() => setNotice('Demo library loaded. Sign in to sync with the API.'))
   }, [])
 
@@ -43,11 +40,11 @@ function App() {
     return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : 0)
   }, [assets, filter, query, sort])
 
-  const toggleSelection = (name: string) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
-  const toggleStar = (name: string) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
-  const showNotice = (message: string) => { setNotice(message); setMenu(null) }
+  const toggleSelection = (name) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
+  const toggleStar = (name) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
+  const showNotice = (message) => { setNotice(message); setMenu(null) }
 
-  const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFiles = (event) => {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
     const added = files.map((file, index) => ({ name: file.name, type: file.name.split('.').pop()?.toUpperCase() ?? 'FILE', size: `${(file.size / 1024 / 1024).toFixed(1)} MB`, color: ['coral', 'blue', 'green', 'yellow'][index % 4], updated: 'Just now' }))
