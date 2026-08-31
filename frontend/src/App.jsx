@@ -11,13 +11,21 @@ const hashCode = (str) => {
   return Math.abs(hash)
 }
 
+const getPlaceholderImage = (name) => {
+  const colors = ['FF6B6B', '4ECDC4', '45B7D1', 'FFA07A', '98D8C8', 'F7DC6F', 'BB8FCE', '85C1E2']
+  const colorIndex = hashCode(name) % colors.length
+  const color = colors[colorIndex]
+  const initials = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect fill='%23${color}' width='300' height='300'/%3E%3Ctext x='50%25' y='50%25' font-size='60' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'%3E${initials}%3C/text%3E%3C/svg%3E`
+}
+
 const demoAssets = [
-  { name: 'Aurora campaign', type: 'JPG', size: '4.8 MB', color: 'coral', updated: '2 min ago', image: `https://picsum.photos/300/300?random=${hashCode('Aurora campaign')}` },
-  { name: 'Product launch reel', type: 'MP4', size: '182 MB', color: 'blue', updated: '18 min ago', image: `https://picsum.photos/300/300?random=${hashCode('Product launch reel')}` },
-  { name: 'Editorial still life', type: 'PNG', size: '8.2 MB', color: 'green', updated: '1 hr ago', image: `https://picsum.photos/300/300?random=${hashCode('Editorial still life')}` },
-  { name: 'Brand guidelines 2026', type: 'PDF', size: '12.4 MB', color: 'cream', updated: '3 hrs ago', image: `https://picsum.photos/300/300?random=${hashCode('Brand guidelines 2026')}` },
-  { name: 'Studio portraits', type: 'RAW', size: '24.7 MB', color: 'violet', updated: 'Yesterday', image: `https://picsum.photos/300/300?random=${hashCode('Studio portraits')}` },
-  { name: 'Spring social cutdowns', type: 'MOV', size: '94 MB', color: 'yellow', updated: 'Yesterday', image: `https://picsum.photos/300/300?random=${hashCode('Spring social cutdowns')}` },
+  { name: 'Aurora campaign', type: 'JPG', size: '4.8 MB', color: 'coral', updated: '2 min ago', image: getPlaceholderImage('Aurora campaign') },
+  { name: 'Product launch reel', type: 'MP4', size: '182 MB', color: 'blue', updated: '18 min ago', image: getPlaceholderImage('Product launch reel') },
+  { name: 'Editorial still life', type: 'PNG', size: '8.2 MB', color: 'green', updated: '1 hr ago', image: getPlaceholderImage('Editorial still life') },
+  { name: 'Brand guidelines 2026', type: 'PDF', size: '12.4 MB', color: 'cream', updated: '3 hrs ago', image: getPlaceholderImage('Brand guidelines 2026') },
+  { name: 'Studio portraits', type: 'RAW', size: '24.7 MB', color: 'violet', updated: 'Yesterday', image: getPlaceholderImage('Studio portraits') },
+  { name: 'Spring social cutdowns', type: 'MOV', size: '94 MB', color: 'yellow', updated: 'Yesterday', image: getPlaceholderImage('Spring social cutdowns') },
 ]
 
 function App() {
@@ -63,7 +71,26 @@ function App() {
   const handleFiles = (event) => {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
-    const added = files.map((file, index) => ({ name: file.name, type: file.name.split('.').pop()?.toUpperCase() ?? 'FILE', size: `${(file.size / 1024 / 1024).toFixed(1)} MB`, color: ['coral', 'blue', 'green', 'yellow'][index % 4], updated: 'Just now', image: `https://picsum.photos/300/300?random=${hashCode(file.name)}` }))
+    
+    const added = files.map((file, index) => {
+      const fileType = file.name.split('.').pop()?.toUpperCase() ?? 'FILE'
+      const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(fileType)
+      let image = getPlaceholderImage(file.name)
+      
+      if (isImage) {
+        image = URL.createObjectURL(file)
+      }
+      
+      return {
+        name: file.name,
+        type: fileType,
+        size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
+        color: ['coral', 'blue', 'green', 'yellow'][index % 4],
+        updated: 'Just now',
+        image: image
+      }
+    })
+    
     setAssets((current) => [...added, ...current])
     showNotice(`${files.length} asset${files.length > 1 ? 's' : ''} added to this demo library.`)
     event.target.value = ''
