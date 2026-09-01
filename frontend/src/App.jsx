@@ -38,6 +38,7 @@ function App() {
   const [starred, setStarred] = useState([])
   const [notice, setNotice] = useState('')
   const [menu, setMenu] = useState(null)
+  const [previewAsset, setPreviewAsset] = useState(null)
   const fileInput = useRef(null)
 
   useEffect(() => {
@@ -52,6 +53,14 @@ function App() {
     const timer = window.setTimeout(() => setNotice(''), 3500)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setPreviewAsset(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const visibleAssets = useMemo(() => {
     const filtered = assets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
@@ -115,13 +124,14 @@ function App() {
       <main className="main">
         <header className="topbar"><div className="breadcrumbs"><span>Library</span><b>/</b><strong>All assets</strong></div><div className="top-actions"><button className="icon-button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button><input ref={fileInput} type="file" multiple hidden onChange={handleFiles} /><button className="upload" onClick={() => fileInput.current?.click()}>+ Upload assets</button></div></header>
         <section className="content" id="assets">
-          <div className="title-row"><div><p className="eyebrow">NORTHSTAR STUDIO / LIBRARY</p><h1>All assets <span>{assets.length}</span></h1><p className="intro">A shared home for your team&apos;s best work.</p></div><button className="ghost" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button></div>
+          <div className="title-row"><div><p className="eyebrow">DIGITAL STUDIO / LIBRARY</p><h1>All assets <span>{assets.length}</span></h1><p className="intro">Organize, collaborate, and elevate your creative workflow.</p></div><button className="ghost" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button></div>
           <div className="toolbar"><label className="search"><span>/</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label><select className="filter" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">Filter: all types</option><option value="JPG">Images</option><option value="MP4">Video</option><option value="PDF">Documents</option></select><select className="sort" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Recently added</option><option value="name">Name A-Z</option></select><button className={`view-toggle ${view === 'grid' ? '' : 'muted'}`} onClick={() => setView('grid')} aria-label="Grid view">▦</button><button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} onClick={() => setView('list')} aria-label="List view">☷</button></div>
           <div className="summary"><span><b>{visibleAssets.length}</b> assets shown</span><span className="dot-separator" /><span>{selected.length ? `${selected.length} selected` : 'Updated today'}</span><span className="summary-spacer" /><span className="sync">● Synced just now</span></div>
-          {visibleAssets.length ? <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>{visibleAssets.map((asset) => <article className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`} key={`${asset.name}-${asset.updated}`} onClick={() => toggleSelection(asset.name)}><div className={`asset-preview ${asset.color}`}>{asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{width: '100%', height: '100%', objectFit: 'cover'}} />}<span className="asset-type">{asset.type}</span><button className="card-menu" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>{menu === asset.name && <div className="menu"><button onClick={() => showNotice(`${asset.name} opened.`)}>Open preview</button><button onClick={() => showNotice(`${asset.name} download queued.`)}>Download</button><button onClick={() => deleteAsset(asset.name)}>Delete</button></div>}<div className="preview-shape" /></div><div className="asset-info"><div><h2>{asset.name}</h2><p>{asset.size} <span>·</span> {asset.updated}</p></div><button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button></div></article>)}</div> : <div className="empty"><strong>No assets found</strong><span>Try another search or upload a new file.</span></div>}
+          {visibleAssets.length ? <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>{visibleAssets.map((asset) => <article className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`} key={`${asset.name}-${asset.updated}`} onClick={() => toggleSelection(asset.name)}><div className={`asset-preview ${asset.color}`} onClick={(e) => { e.stopPropagation(); setPreviewAsset(asset) }} style={{cursor: 'pointer'}}>{asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{width: '100%', height: '100%', objectFit: 'cover'}} />}<span className="asset-type">{asset.type}</span><button className="card-menu" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>{menu === asset.name && <div className="menu"><button onClick={() => showNotice(`${asset.name} opened.`)}>Open preview</button><button onClick={() => showNotice(`${asset.name} download queued.`)}>Download</button><button onClick={() => deleteAsset(asset.name)}>Delete</button></div>}<div className="preview-shape" /></div><div className="asset-info"><div><h2>{asset.name}</h2><p>{asset.size} <span>·</span> {asset.updated}</p></div><button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button></div></article>)}</div> : <div className="empty"><strong>No assets found</strong><span>Try another search or upload a new file.</span></div>}
         </section>
       </main>
       {notice && <div className="toast">{notice}</div>}
+      {previewAsset && <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}} onClick={() => setPreviewAsset(null)}><div style={{position: 'relative', backgroundColor: '#fff', borderRadius: '8px', padding: '20px', maxWidth: '70vw', maxHeight: '70vh', overflowY: 'auto', overflowX: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)'}} onClick={(e) => e.stopPropagation()}><button onClick={() => setPreviewAsset(null)} style={{position: 'absolute', top: '10px', right: '10px', backgroundColor: '#f0f0f0', border: 'none', color: '#333', fontSize: '24px', cursor: 'pointer', width: '36px', height: '36px', borderRadius: '50%'}}>×</button><img src={previewAsset.image} alt={previewAsset.name} style={{maxWidth: '100%', maxHeight: 'calc(70vh - 80px)', objectFit: 'contain', display: 'block', marginBottom: '10px'}} /><div style={{paddingRight: '36px'}}><h3 style={{margin: '0 0 5px 0', color: '#333'}}>{previewAsset.name}</h3><p style={{margin: '0', color: '#666', fontSize: '14px'}}>{previewAsset.size} · {previewAsset.type}</p></div></div></div>}
     </div>
   )
 }
