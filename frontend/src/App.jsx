@@ -66,6 +66,7 @@ function App() {
     const filtered = assets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
     return [...filtered].sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : 0)
   }, [assets, filter, query, sort])
+  const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
 
   const toggleSelection = (name) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
   const toggleStar = (name) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
@@ -75,6 +76,18 @@ function App() {
     setSelected((current) => current.filter((item) => item !== name))
     setStarred((current) => current.filter((item) => item !== name))
     showNotice(`${name} deleted.`)
+  }
+  const renameAsset = (asset) => {
+    const newName = window.prompt('Rename asset', asset.name)?.trim()
+    if (!newName || newName === asset.name) {
+      setMenu(null)
+      return
+    }
+    setAssets((current) => current.map((item) => item.name === asset.name ? { ...item, name: newName } : item))
+    setSelected((current) => current.map((item) => item === asset.name ? newName : item))
+    setStarred((current) => current.map((item) => item === asset.name ? newName : item))
+    if (previewAsset?.name === asset.name) setPreviewAsset({ ...previewAsset, name: newName })
+    showNotice(`${asset.name} renamed to ${newName}.`)
   }
 
   const handleFiles = (event) => {
@@ -118,6 +131,10 @@ function App() {
           <p className="nav-label second">Manage</p>
           <button onClick={() => showNotice('Activity view is coming next.')}><span>◷</span> Activity</button>
           <button onClick={() => showNotice('Settings view is coming next.')}><span>⚙</span> Settings</button>
+          <div className="favorites-panel">
+            <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
+            {favoriteAssets.length ? favoriteAssets.map((asset) => <div className="favorite-item" key={asset.name} onClick={() => setPreviewAsset(asset)}><img src={asset.image} alt="" /><span>{asset.name}</span><button className="favorite-remove" onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Remove ${asset.name} from favorites`}>★</button></div>) : <p className="favorites-empty">Star an asset to keep it here.</p>}
+          </div>
         </nav>
         <button className="profile" onClick={() => showNotice('Admin panel coming soon.')}><div><strong>Admin</strong></div></button>
       </aside>
@@ -127,7 +144,7 @@ function App() {
           <div className="title-row"><div><p className="eyebrow">DIGITAL STUDIO / LIBRARY</p><h1>All assets <span>{assets.length}</span></h1><p className="intro">Organize, collaborate, and elevate your creative workflow.</p></div><button className="ghost" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button></div>
           <div className="toolbar"><label className="search"><span>/</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label><select className="filter" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">Filter: all types</option><option value="JPG">Images</option><option value="MP4">Video</option><option value="PDF">Documents</option></select><select className="sort" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Recently added</option><option value="name">Name A-Z</option></select><button className={`view-toggle ${view === 'grid' ? '' : 'muted'}`} onClick={() => setView('grid')} aria-label="Grid view">▦</button><button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} onClick={() => setView('list')} aria-label="List view">☷</button></div>
           <div className="summary"><span><b>{visibleAssets.length}</b> assets shown</span><span className="dot-separator" /><span>{selected.length ? `${selected.length} selected` : 'Updated today'}</span><span className="summary-spacer" /><span className="sync">● Synced just now</span></div>
-          {visibleAssets.length ? <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>{visibleAssets.map((asset) => <article className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`} key={`${asset.name}-${asset.updated}`} onClick={() => toggleSelection(asset.name)}><div className={`asset-preview ${asset.color}`} onClick={(e) => { e.stopPropagation(); setPreviewAsset(asset) }} style={{cursor: 'pointer'}}>{asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{width: '100%', height: '100%', objectFit: 'cover'}} />}<span className="asset-type">{asset.type}</span><button className="card-menu" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>{menu === asset.name && <div className="menu"><button onClick={() => showNotice(`${asset.name} opened.`)}>Open preview</button><button onClick={() => showNotice(`${asset.name} download queued.`)}>Download</button><button onClick={() => deleteAsset(asset.name)}>Delete</button></div>}<div className="preview-shape" /></div><div className="asset-info"><div><h2>{asset.name}</h2><p>{asset.size} <span>·</span> {asset.updated}</p></div><button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button></div></article>)}</div> : <div className="empty"><strong>No assets found</strong><span>Try another search or upload a new file.</span></div>}
+          {visibleAssets.length ? <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>{visibleAssets.map((asset) => <article className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`} key={`${asset.name}-${asset.updated}`} onClick={() => toggleSelection(asset.name)}><div className={`asset-preview ${asset.color}`} onClick={(e) => { e.stopPropagation(); setPreviewAsset(asset) }} style={{cursor: 'pointer'}}>{asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{width: '100%', height: '100%', objectFit: 'cover'}} />}<span className="asset-type">{asset.type}</span><button className="card-menu" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>{menu === asset.name && <div className="menu"><button onClick={(event) => { event.stopPropagation(); showNotice(`${asset.name} opened.`) }}>Open preview</button><button onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button><button onClick={(event) => { event.stopPropagation(); showNotice(`${asset.name} download queued.`) }}>Download</button><button onClick={(event) => { event.stopPropagation(); deleteAsset(asset.name) }}>Delete</button></div>}<div className="preview-shape" /></div><div className="asset-info"><div><h2>{asset.name}</h2><p>{asset.size} <span>·</span> {asset.updated}</p></div><button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button></div></article>)}</div> : <div className="empty"><strong>No assets found</strong><span>Try another search or upload a new file.</span></div>}
         </section>
       </main>
       {notice && <div className="toast">{notice}</div>}
