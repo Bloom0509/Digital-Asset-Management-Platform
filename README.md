@@ -1,4 +1,4 @@
-# Digital Asset Management + AI
+# Digital Asset Management System + AI
 
 A multi-tenant digital asset management platform with React, Django REST Framework, PostgreSQL, Redis, S3-compatible storage, pgvector, and AI services.
 
