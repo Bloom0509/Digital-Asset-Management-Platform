@@ -129,6 +129,7 @@ function DashboardApp({ onLogout }) {
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
   }, [assets, filter, query, sort])
 
+  const totalAssetCount = assets.length
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
 
   const toggleSelection = (name) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
@@ -189,7 +190,7 @@ function DashboardApp({ onLogout }) {
         <div className="wordmark">Digital Asset</div>
         <nav>
           <p className="nav-label">Workspace</p>
-          <button className="active" type="button" onClick={() => showNotice('Showing all assets')}><span>▦</span> All assets <b>{assets.length}</b></button>
+          <button className="active" type="button" onClick={() => showNotice('Showing all assets')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
           <button type="button" onClick={() => showNotice('Collections view is coming next.')}><span>□</span> Collections</button>
           <button type="button" onClick={() => showNotice('No shared assets yet.')}><span>↗</span> Shared with me</button>
           <button type="button" onClick={() => showNotice('Trash is empty.')}><span>⌫</span> Trash</button>
@@ -224,7 +225,7 @@ function DashboardApp({ onLogout }) {
           <div className="title-row">
             <div>
               <p className="eyebrow">LIBRARY</p>
-              <h1>All assets <span>{assets.length}</span></h1>
+              <h1>All assets <span>{totalAssetCount}</span></h1>
               <p className="intro">Your asset library is empty until you upload files.</p>
             </div>
             <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>

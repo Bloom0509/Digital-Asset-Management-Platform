@@ -7,9 +7,12 @@ from .serializers import AssetSerializer
 
 class AssetViewSet(viewsets.ModelViewSet):
     serializer_class = AssetSerializer
+    authentication_classes = []
 
     def get_queryset(self):
-        return Asset.objects.filter(tenant=self.request.user.active_tenant) if self.request.user.is_authenticated else Asset.objects.none()
+        if self.request.user.is_authenticated:
+            return Asset.objects.filter(tenant=self.request.user.active_tenant)
+        return Asset.objects.none()
 
     def get_permissions(self):
         if self.request.method == 'GET':
@@ -17,4 +20,6 @@ class AssetViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def perform_create(self, serializer):
+        if not self.request.user.is_authenticated:
+            return
         serializer.save(tenant=self.request.user.active_tenant, uploaded_by=self.request.user)
