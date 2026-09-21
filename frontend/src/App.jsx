@@ -166,12 +166,15 @@ function DashboardApp({ onLogout }) {
     const added = files.map((file, index) => {
       const fileType = file.name.split('.').pop()?.toUpperCase() ?? 'FILE'
       const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(fileType)
+      const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(fileType)
       let image = getPlaceholderImage(file.name)
-      if (isImage) image = URL.createObjectURL(file)
+      if (isImage || isVideo) image = URL.createObjectURL(file)
 
       return {
+        id: `${Date.now()}-${index}-${file.name}`,
         name: file.name,
         type: fileType,
+        kind: isImage ? 'image' : isVideo ? 'video' : 'file',
         size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
         color: ['coral', 'blue', 'green', 'yellow'][index % 4],
         updated: 'Just now',
@@ -257,17 +260,21 @@ function DashboardApp({ onLogout }) {
 
           {visibleAssets.length ? (
             <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>
-              {visibleAssets.map((asset) => (
+              {visibleAssets.map((asset, index) => (
                 <article
                   className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`}
-                  key={`${asset.name}-${asset.updated}`}
+                  key={asset.id ?? `${asset.name}-${asset.updated}-${index}`}
                   onClick={(event) => {
                     if (event.target.closest('button')) return
                     setPreviewAsset(asset)
                   }}
                 >
                   <div className={`asset-preview ${asset.color}`} onClick={(event) => { event.stopPropagation(); setPreviewAsset(asset) }} style={{ cursor: 'pointer' }}>
-                    {asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                    {asset.kind === 'video' ? (
+                      <video src={asset.image} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', background: '#000' }} />
+                    ) : (
+                      asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    )}
                     <span className="asset-type">{asset.type}</span>
                     <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>
                     {menu === asset.name && (
@@ -278,7 +285,6 @@ function DashboardApp({ onLogout }) {
                         <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset.name) }}>Delete</button>
                       </div>
                     )}
-                    <div className="preview-shape" />
                   </div>
                   <div className="asset-info">
                     <div>
@@ -301,7 +307,11 @@ function DashboardApp({ onLogout }) {
         <div className="modal-backdrop" onClick={() => setPreviewAsset(null)}>
           <div className="asset-modal" onClick={(event) => event.stopPropagation()}>
             <button className="modal-close" type="button" onClick={() => setPreviewAsset(null)}>×</button>
-            <img src={previewAsset.image} alt={previewAsset.name} className="asset-modal-image" />
+            {previewAsset.kind === 'video' ? (
+              <video src={previewAsset.image} controls playsInline className="asset-modal-image" />
+            ) : (
+              <img src={previewAsset.image} alt={previewAsset.name} className="asset-modal-image" />
+            )}
             <div className="asset-modal-copy">
               <h3>{previewAsset.name}</h3>
               <p>{previewAsset.size} · {previewAsset.type}</p>
