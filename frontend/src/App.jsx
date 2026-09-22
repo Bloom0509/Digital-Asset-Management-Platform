@@ -253,9 +253,9 @@ function DashboardApp({ onLogout }) {
           <div className="summary">
             <span><b>{visibleAssets.length}</b> assets shown</span>
             <span className="dot-separator" />
-            <span>{selected.length ? `${selected.length} selected` : 'No recent uploads'}</span>
+            <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
             <span className="summary-spacer" />
-            <span className="sync">● Waiting for files</span>
+            <span className="sync">● {totalAssetCount > 0 ? 'Library active' : 'No files yet'}</span>
           </div>
 
           {visibleAssets.length ? (
