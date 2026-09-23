@@ -26,7 +26,7 @@ const initialAuthForm = {
   password: '',
 }
 
-function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, setAuthMessage, authMessage, onLogin, onSignup }) {
+function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, setAuthMessage, authMessage, onLogin, onSignup, theme, toggleTheme }) {
   const isLogin = authMode === 'login'
 
   const handleChange = (event) => {
@@ -35,7 +35,10 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
   }
 
   return (
-    <div className="auth-shell">
+    <div className={`auth-shell theme-${theme}`}>
+      <button type="button" className="theme-toggle auth-theme-toggle" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+        {theme === 'dark' ? '☀️' : '🌙'}
+      </button>
       <div className="auth-panel auth-branding">
         <div className="brand-chip">Digital Asset</div>
         <h1>Organize your creative work in one secure place.</h1>
@@ -87,7 +90,7 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
   )
 }
 
-function DashboardApp({ onLogout }) {
+function DashboardApp({ onLogout, theme, toggleTheme }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
@@ -188,7 +191,7 @@ function DashboardApp({ onLogout }) {
   }
 
   return (
-    <div className="shell" onClick={() => menu && setMenu(null)}>
+    <div className={`shell theme-${theme}`} onClick={() => menu && setMenu(null)}>
       <aside className="sidebar">
         <div className="wordmark">Digital Asset</div>
         <nav>
@@ -218,6 +221,9 @@ function DashboardApp({ onLogout }) {
         <header className="topbar">
           <div className="breadcrumbs"><span>Library</span><b>/</b><strong>All assets</strong></div>
           <div className="top-actions">
+            <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
             <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
@@ -328,7 +334,15 @@ function App() {
   const [authForm, setAuthForm] = useState(initialAuthForm)
   const [authMessage, setAuthMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = window.localStorage.getItem('dam_theme')
+    return savedTheme || 'light'
+  })
   const [token, setToken] = useState(() => window.localStorage.getItem('dam_token'))
+
+  useEffect(() => {
+    window.localStorage.setItem('dam_theme', theme)
+  }, [theme])
 
   const handleLogin = async (event) => {
     event.preventDefault()
@@ -393,6 +407,10 @@ function App() {
     }
   }
 
+  const toggleTheme = () => {
+    setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))
+  }
+
   const handleLogout = () => {
     window.localStorage.removeItem('dam_token')
     setToken(null)
@@ -412,11 +430,13 @@ function App() {
         setAuthMessage={setAuthMessage}
         onLogin={handleLogin}
         onSignup={handleSignup}
+        theme={theme}
+        toggleTheme={toggleTheme}
       />
     )
   }
 
-  return <DashboardApp onLogout={handleLogout} />
+  return <DashboardApp onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
 }
 
 export default App
