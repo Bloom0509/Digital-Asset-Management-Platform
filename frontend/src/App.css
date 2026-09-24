@@ -140,8 +140,6 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 .theme-dark .menu button,
 .theme-dark .menu,
 .theme-dark .wordmark,
-.theme-dark .sidebar .active,
-.theme-dark nav button.active,
 .theme-dark .sidebar nav button,
 .theme-dark .title-row h1,
 .theme-dark .title-row h1 span,
@@ -156,6 +154,11 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 .theme-dark .empty span {
   color: #ffffff;
 }
+
+.theme-dark nav button.active,
+.theme-dark .sidebar .active {
+  color: #111111;
+}
 .theme-dark .favorite-remove {
   color: #f4d35e;
 }
@@ -166,6 +169,23 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 .theme-dark .asset-info span,
 .theme-dark .menu button {
   color: #c7d0ca;
+}
+.theme-dark .asset-modal {
+  background: #111111;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.5);
+}
+.theme-dark .asset-modal-copy h3,
+.theme-dark .asset-modal-copy p,
+.theme-dark .modal-close {
+  color: #f5f5f5;
+}
+.theme-dark .asset-modal-image {
+  background: #1a1a1a;
+}
+.theme-dark .modal-close {
+  background: #1f1f1f;
+  border: 1px solid #2d2d2d;
 }
 .theme-dark .asset-type,
 .theme-dark .card-menu {
@@ -615,6 +635,16 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   background: rgba(12, 18, 17, 0.48);
   z-index: 999;
   padding: 24px;
+}
+
+.modal-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 10% 20%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 35%, transparent 70%);
+  filter: blur(18px);
+  pointer-events: none;
 }
 
 .asset-modal {
