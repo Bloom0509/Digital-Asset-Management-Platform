@@ -26,6 +26,12 @@ const initialAuthForm = {
   password: '',
 }
 
+const initialCustomAssetForm = {
+  name: '',
+  type: 'JPG',
+  size: '1.2 MB',
+}
+
 function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, setAuthMessage, authMessage, onLogin, onSignup, theme, toggleTheme }) {
   const isLogin = authMode === 'login'
 
@@ -101,6 +107,8 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
   const [notice, setNotice] = useState('')
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
+  const [customAssetOpen, setCustomAssetOpen] = useState(false)
+  const [customAssetForm, setCustomAssetForm] = useState(initialCustomAssetForm)
   const fileInput = useRef(null)
 
   useEffect(() => {
@@ -190,6 +198,34 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
     event.target.value = ''
   }
 
+  const handleCreateCustomAsset = () => {
+    const trimmedName = customAssetForm.name.trim()
+    if (!trimmedName) {
+      showNotice('Asset name is required.')
+      return
+    }
+
+    const type = customAssetForm.type.toUpperCase()
+    const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(type)
+    const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(type)
+
+    const newAsset = {
+      id: `custom-${Date.now()}`,
+      name: trimmedName,
+      type,
+      kind: isImage ? 'image' : isVideo ? 'video' : 'file',
+      size: customAssetForm.size || 'Custom',
+      color: ['coral', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)],
+      updated: 'Just now',
+      image: getPlaceholderImage(trimmedName),
+    }
+
+    setAssets((current) => [newAsset, ...current])
+    setCustomAssetOpen(false)
+    setCustomAssetForm(initialCustomAssetForm)
+    showNotice(`${trimmedName} created successfully.`)
+  }
+
   return (
     <div className={`shell theme-${theme}`} onClick={() => menu && setMenu(null)}>
       <aside className="sidebar">
@@ -226,6 +262,7 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
             </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
+            <button className="upload secondary" type="button" onClick={() => setCustomAssetOpen(true)}>+ Create asset</button>
             <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
           </div>
         </header>
@@ -309,6 +346,55 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
       </main>
 
       {notice && <div className="toast">{notice}</div>}
+      {customAssetOpen && (
+        <div className="modal-backdrop" onClick={() => setCustomAssetOpen(false)}>
+          <div className="asset-modal create-asset-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setCustomAssetOpen(false)}>×</button>
+            <div className="asset-modal-copy">
+              <h3>Create custom asset</h3>
+              <p>Add a new asset entry to your personal library.</p>
+            </div>
+            <div className="create-asset-form">
+              <label>
+                <span>Asset name</span>
+                <input
+                  value={customAssetForm.name}
+                  onChange={(event) => setCustomAssetForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Campaign banner"
+                />
+              </label>
+              <div className="create-asset-row">
+                <label>
+                  <span>Type</span>
+                  <select
+                    value={customAssetForm.type}
+                    onChange={(event) => setCustomAssetForm((current) => ({ ...current, type: event.target.value }))}
+                  >
+                    <option value="JPG">JPG</option>
+                    <option value="PNG">PNG</option>
+                    <option value="MP4">MP4</option>
+                    <option value="PDF">PDF</option>
+                    <option value="SVG">SVG</option>
+                    <option value="ZIP">ZIP</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Size</span>
+                  <input
+                    value={customAssetForm.size}
+                    onChange={(event) => setCustomAssetForm((current) => ({ ...current, size: event.target.value }))}
+                    placeholder="1.2 MB"
+                  />
+                </label>
+              </div>
+              <div className="create-asset-actions">
+                <button type="button" className="ghost create-cancel" onClick={() => setCustomAssetOpen(false)}>Cancel</button>
+                <button type="button" className="upload create-submit" onClick={handleCreateCustomAsset}>Save asset</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {previewAsset && (
         <div className="modal-backdrop" onClick={() => setPreviewAsset(null)}>
           <div className="asset-modal" onClick={(event) => event.stopPropagation()}>
