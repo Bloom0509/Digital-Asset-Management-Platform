@@ -741,6 +741,45 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   gap: 14px;
 }
 
+.ai-suggestions {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e6ebea;
+  border-radius: 12px;
+  background: #f5f9f7;
+}
+
+.ai-suggestions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #183d36;
+}
+
+.ai-refresh {
+  padding: 6px 10px;
+}
+
+.ai-suggestion-box {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #42514f;
+}
+
+.ai-suggestion-box p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ai-apply {
+  justify-self: flex-start;
+}
+
 .create-asset-actions {
   display: flex;
   justify-content: flex-end;

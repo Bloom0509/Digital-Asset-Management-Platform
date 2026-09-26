@@ -96,7 +96,7 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
   )
 }
 
-function DashboardApp({ onLogout, theme, toggleTheme }) {
+function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
@@ -109,17 +109,74 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
   const [previewAsset, setPreviewAsset] = useState(null)
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
   const [customAssetForm, setCustomAssetForm] = useState(initialCustomAssetForm)
+  const [aiSuggestions, setAiSuggestions] = useState(null)
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
   const fileInput = useRef(null)
+
+  const requestAiSuggestions = async (assetName, assetType) => {
+    const trimmedName = (assetName || '').trim()
+    if (!trimmedName) {
+      setAiSuggestions(null)
+      setAiError('')
+      return
+    }
+
+    setIsAiLoading(true)
+    setAiError('')
+
+    try {
+      const response = await fetch('/api/ai/metadata/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          asset_name: trimmedName,
+          asset_type: assetType,
+          file_extension: assetType.toLowerCase(),
+          mime_type: assetType.toLowerCase() === 'mp4' ? 'video/mp4' : 'image/png',
+          content_context: `digital asset for ${trimmedName}`,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Unable to generate AI suggestions.')
+      }
+
+      setAiSuggestions(data?.suggestions || null)
+    } catch (error) {
+      setAiSuggestions(null)
+      setAiError(error.message || 'Unable to generate AI suggestions.')
+    } finally {
+      setIsAiLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const trimmedName = customAssetForm.name.trim()
+    if (!trimmedName) {
+      setAiSuggestions(null)
+      setAiError('')
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      requestAiSuggestions(customAssetForm.name, customAssetForm.type)
+    }, 250)
+
+    return () => window.clearTimeout(timer)
+  }, [customAssetForm.name, customAssetForm.type])
 
   useEffect(() => {
     const token = window.localStorage.getItem('dam_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
-    fetch('/api/assets/', { headers })
+    apiRequest('/api/assets/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setAssets(Array.isArray(data) ? data : []))
       .catch(() => setAssets([]))
-  }, [])
+  }, [apiRequest])
 
   useEffect(() => {
     if (!notice) return
@@ -198,32 +255,63 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
     event.target.value = ''
   }
 
-  const handleCreateCustomAsset = () => {
+  const handleCreateCustomAsset = async () => {
     const trimmedName = customAssetForm.name.trim()
     if (!trimmedName) {
       showNotice('Asset name is required.')
       return
     }
 
+    const token = window.localStorage.getItem('dam_token')
     const type = customAssetForm.type.toUpperCase()
     const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(type)
     const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(type)
 
-    const newAsset = {
-      id: `custom-${Date.now()}`,
-      name: trimmedName,
-      type,
-      kind: isImage ? 'image' : isVideo ? 'video' : 'file',
-      size: customAssetForm.size || 'Custom',
-      color: ['coral', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)],
-      updated: 'Just now',
-      image: getPlaceholderImage(trimmedName),
-    }
+    try {
+      const payload = {
+        name: trimmedName,
+        object_key: `${trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}.${type.toLowerCase()}`,
+        content_type: isImage ? 'image/png' : isVideo ? 'video/mp4' : 'application/octet-stream',
+        size_bytes: Number.parseInt(customAssetForm.size, 10) || 120000,
+        metadata: {
+          source: 'custom_asset',
+          type,
+          generated_from: 'custom asset modal',
+        },
+      }
 
-    setAssets((current) => [newAsset, ...current])
-    setCustomAssetOpen(false)
-    setCustomAssetForm(initialCustomAssetForm)
-    showNotice(`${trimmedName} created successfully.`)
+      const response = await apiRequest('/api/assets/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.detail || data?.non_field_errors?.[0] || 'Unable to create asset.')
+      }
+
+      const newAsset = {
+        id: data.id || `custom-${Date.now()}`,
+        name: data.name || trimmedName,
+        type: data.metadata?.type || type,
+        kind: isImage ? 'image' : isVideo ? 'video' : 'file',
+        size: customAssetForm.size || `${Math.max(1, Math.round((data.size_bytes || 120000) / 1024 / 1024))} MB`,
+        color: ['coral', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)],
+        updated: 'Just now',
+        image: getPlaceholderImage(trimmedName),
+      }
+
+      setAssets((current) => [newAsset, ...current])
+      setCustomAssetOpen(false)
+      setCustomAssetForm(initialCustomAssetForm)
+      showNotice(`${trimmedName} created successfully.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to create asset.')
+    }
   }
 
   return (
@@ -387,6 +475,45 @@ function DashboardApp({ onLogout, theme, toggleTheme }) {
                   />
                 </label>
               </div>
+              <div className="ai-suggestions">
+                <div className="ai-suggestions-header">
+                  <span>AI suggestions</span>
+                  <button type="button" className="ghost ai-refresh" onClick={() => requestAiSuggestions(customAssetForm.name, customAssetForm.type)}>Refresh</button>
+                </div>
+
+                {isAiLoading ? (
+                  <div className="ai-suggestion-box">
+                    <p>Generating metadata suggestions…</p>
+                  </div>
+                ) : aiError ? (
+                  <div className="ai-suggestion-box">
+                    <p className="ai-error">{aiError}</p>
+                  </div>
+                ) : aiSuggestions ? (
+                  <>
+                    <div className="ai-suggestion-box">
+                      <p><strong>Filename:</strong> {aiSuggestions.filename}</p>
+                      <p><strong>Alt text:</strong> {aiSuggestions.alt_text}</p>
+                      <p><strong>Caption:</strong> {aiSuggestions.caption}</p>
+                      <p><strong>Tags:</strong> {aiSuggestions.tags?.join(', ')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="upload secondary ai-apply"
+                      onClick={() => setCustomAssetForm((current) => ({
+                        ...current,
+                        name: current.name || aiSuggestions.filename.replace(/\.[^.]+$/, ''),
+                      }))}
+                    >
+                      Use suggested name
+                    </button>
+                  </>
+                ) : (
+                  <div className="ai-suggestion-box">
+                    <p>Enter an asset name to generate AI metadata suggestions.</p>
+                  </div>
+                )}
+              </div>
               <div className="create-asset-actions">
                 <button type="button" className="ghost create-cancel" onClick={() => setCustomAssetOpen(false)}>Cancel</button>
                 <button type="button" className="upload create-submit" onClick={handleCreateCustomAsset}>Save asset</button>
@@ -426,6 +553,76 @@ function App() {
   })
   const [token, setToken] = useState(() => window.localStorage.getItem('dam_token'))
 
+  const clearAuthSession = () => {
+    window.localStorage.removeItem('dam_token')
+    window.localStorage.removeItem('dam_refresh_token')
+    setToken(null)
+    setAuthMode('login')
+    setAuthMessage('Your session expired. Please log in again.')
+  }
+
+  const refreshAccessToken = async () => {
+    const refreshToken = window.localStorage.getItem('dam_refresh_token')
+    if (!refreshToken) {
+      clearAuthSession()
+      return null
+    }
+
+    const response = await fetch('/api/auth/token/refresh/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh: refreshToken }),
+    })
+
+    if (!response.ok) {
+      clearAuthSession()
+      return null
+    }
+
+    const data = await response.json()
+    const nextAccessToken = data?.access
+
+    if (!nextAccessToken) {
+      clearAuthSession()
+      return null
+    }
+
+    window.localStorage.setItem('dam_token', nextAccessToken)
+    setToken(nextAccessToken)
+    return nextAccessToken
+  }
+
+  const apiRequest = async (url, options = {}, retry = true) => {
+    const accessToken = window.localStorage.getItem('dam_token')
+    const headers = {
+      ...(options.headers || {}),
+    }
+
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`
+    }
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    })
+
+    if ((response.status === 401 || response.status === 403) && retry) {
+      const refreshedToken = await refreshAccessToken()
+      if (refreshedToken) {
+        return fetch(url, {
+          ...options,
+          headers: {
+            ...(options.headers || {}),
+            Authorization: `Bearer ${refreshedToken}`,
+          },
+        })
+      }
+    }
+
+    return response
+  }
+
   useEffect(() => {
     window.localStorage.setItem('dam_theme', theme)
   }, [theme])
@@ -451,7 +648,14 @@ function App() {
         throw new Error(data.detail || data.non_field_errors?.[0] || 'Invalid username or password.')
       }
 
+      if (!data.access) {
+        throw new Error('Authentication token was not returned by the server.')
+      }
+
       window.localStorage.setItem('dam_token', data.access)
+      if (data.refresh) {
+        window.localStorage.setItem('dam_refresh_token', data.refresh)
+      }
       setToken(data.access)
       setAuthForm(initialAuthForm)
     } catch (error) {
@@ -499,10 +703,25 @@ function App() {
 
   const handleLogout = () => {
     window.localStorage.removeItem('dam_token')
+    window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
     setAuthMode('login')
     setAuthMessage('You have been signed out.')
   }
+
+  useEffect(() => {
+    if (!token) return
+
+    apiRequest('/api/assets/', { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => {
+        if (response.status === 401 || response.status === 403) {
+          clearAuthSession()
+        }
+      })
+      .catch(() => {
+        clearAuthSession()
+      })
+  }, [token])
 
   if (!token) {
     return (
@@ -522,7 +741,7 @@ function App() {
     )
   }
 
-  return <DashboardApp onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+  return <DashboardApp onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} apiRequest={apiRequest} />
 }
 
 export default App
