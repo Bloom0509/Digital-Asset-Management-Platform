@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const hashCode = (str) => {
@@ -410,7 +410,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                     <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>
                     {menu === asset.name && (
                       <div className="menu">
-                        <button type="button" onClick={(event) => { event.stopPropagation(); showNotice(`${asset.name} opened.`) }}>Open preview</button>
+                        <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); setPreviewAsset(asset) }}>Open preview</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); showNotice(`${asset.name} download queued.`) }}>Download</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset.name) }}>Delete</button>
@@ -553,15 +553,15 @@ function App() {
   })
   const [token, setToken] = useState(() => window.localStorage.getItem('dam_token'))
 
-  const clearAuthSession = () => {
+  const clearAuthSession = useCallback(() => {
     window.localStorage.removeItem('dam_token')
     window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
     setAuthMode('login')
     setAuthMessage('Your session expired. Please log in again.')
-  }
+  }, [])
 
-  const refreshAccessToken = async () => {
+  const refreshAccessToken = useCallback(async () => {
     const refreshToken = window.localStorage.getItem('dam_refresh_token')
     if (!refreshToken) {
       clearAuthSession()
@@ -590,9 +590,9 @@ function App() {
     window.localStorage.setItem('dam_token', nextAccessToken)
     setToken(nextAccessToken)
     return nextAccessToken
-  }
+  }, [clearAuthSession])
 
-  const apiRequest = async (url, options = {}, retry = true) => {
+  const apiRequest = useCallback(async (url, options = {}, retry = true) => {
     const accessToken = window.localStorage.getItem('dam_token')
     const headers = {
       ...(options.headers || {}),
@@ -621,7 +621,7 @@ function App() {
     }
 
     return response
-  }
+  }, [refreshAccessToken])
 
   useEffect(() => {
     window.localStorage.setItem('dam_theme', theme)
