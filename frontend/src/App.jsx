@@ -207,6 +207,47 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     setMenu(null)
   }
 
+  const downloadAsset = async (asset) => {
+    const sourceUrl = asset?.download_url || asset?.image || asset?.url
+    if (!sourceUrl) {
+      showNotice(`No downloadable file found for ${asset?.name || 'this asset'}.`)
+      return
+    }
+
+    try {
+      const response = await fetch(sourceUrl, {
+        headers: {
+          ...(window.localStorage.getItem('dam_token') ? { Authorization: `Bearer ${window.localStorage.getItem('dam_token')}` } : {}),
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Unable to download this asset.')
+      }
+
+      const blob = await response.blob()
+      const blobUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = asset.name || 'download'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(blobUrl)
+      showNotice(`${asset.name} download started.`)
+    } catch (error) {
+      const fallbackLink = document.createElement('a')
+      fallbackLink.href = sourceUrl
+      fallbackLink.download = asset.name || 'download'
+      fallbackLink.target = '_blank'
+      fallbackLink.rel = 'noopener noreferrer'
+      document.body.appendChild(fallbackLink)
+      fallbackLink.click()
+      fallbackLink.remove()
+      showNotice(`${asset.name} download started.`)
+    }
+  }
+
   const deleteAsset = (name) => {
     setAssets((current) => current.filter((asset) => asset.name !== name))
     setSelected((current) => current.filter((item) => item !== name))
@@ -412,7 +453,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                       <div className="menu">
                         <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); setPreviewAsset(asset) }}>Open preview</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>
-                        <button type="button" onClick={(event) => { event.stopPropagation(); showNotice(`${asset.name} download queued.`) }}>Download</button>
+                        <button type="button" onClick={(event) => { event.stopPropagation(); downloadAsset(asset) }}>Download</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset.name) }}>Delete</button>
                       </div>
                     )}
