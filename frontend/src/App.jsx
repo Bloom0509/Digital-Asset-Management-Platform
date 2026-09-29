@@ -23,6 +23,7 @@ const emptyAssets = []
 
 const initialAuthForm = {
   username: '',
+  email: '',
   password: '',
 }
 
@@ -32,7 +33,7 @@ const initialCustomAssetForm = {
   size: '1.2 MB',
 }
 
-function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, setAuthMessage, authMessage, onLogin, onSignup, theme, toggleTheme }) {
+function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, authMessage, onLogin, onSignup, theme, toggleTheme }) {
   const isLogin = authMode === 'login'
 
   const handleChange = (event) => {
@@ -81,6 +82,13 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
             <span>Username</span>
             <input name="username" value={authForm.username} onChange={handleChange} placeholder="Username" required />
           </label>
+
+          {!isLogin && (
+            <label>
+              <span>Email</span>
+              <input type="email" name="email" value={authForm.email} onChange={handleChange} placeholder="you@example.com" required />
+            </label>
+          )}
 
           <label>
             <span>Password</span>
@@ -156,6 +164,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   useEffect(() => {
     const trimmedName = customAssetForm.name.trim()
     if (!trimmedName) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAiSuggestions(null)
       setAiError('')
       return
@@ -200,7 +209,6 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const totalAssetCount = assets.length
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
 
-  const toggleSelection = (name) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
   const toggleStar = (name) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
   const showNotice = (message) => {
     setNotice(message)
@@ -235,7 +243,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       link.remove()
       window.URL.revokeObjectURL(blobUrl)
       showNotice(`${asset.name} download started.`)
-    } catch (error) {
+    } catch {
       const fallbackLink = document.createElement('a')
       fallbackLink.href = sourceUrl
       fallbackLink.download = asset.name || 'download'
@@ -584,7 +592,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 }
 
 function App() {
-  const [authMode, setAuthMode] = useState('login')
+  const [authMode, setAuthMode] = useState(() => window.location.pathname === '/signup' ? 'signup' : 'login')
   const [authForm, setAuthForm] = useState(initialAuthForm)
   const [authMessage, setAuthMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -593,14 +601,22 @@ function App() {
     return savedTheme || 'light'
   })
   const [token, setToken] = useState(() => window.localStorage.getItem('dam_token'))
+  const [authStatus, setAuthStatus] = useState(() => window.localStorage.getItem('dam_token') ? 'checking' : 'unauthenticated')
+
+  const navigateToAuthMode = useCallback((mode, replace = false) => {
+    const path = mode === 'signup' ? '/signup' : '/login'
+    window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
+    setAuthMode(mode)
+  }, [])
 
   const clearAuthSession = useCallback(() => {
     window.localStorage.removeItem('dam_token')
     window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
-    setAuthMode('login')
+    setAuthStatus('unauthenticated')
+    navigateToAuthMode('login', true)
     setAuthMessage('Your session expired. Please log in again.')
-  }, [])
+  }, [navigateToAuthMode])
 
   const refreshAccessToken = useCallback(async () => {
     const refreshToken = window.localStorage.getItem('dam_refresh_token')
@@ -668,6 +684,25 @@ function App() {
     window.localStorage.setItem('dam_theme', theme)
   }, [theme])
 
+  useEffect(() => {
+    const syncAuthRoute = () => {
+      const path = window.location.pathname
+      if (!token && path !== '/login' && path !== '/signup') {
+        navigateToAuthMode('login', true)
+        return
+      }
+      if (token && (path === '/login' || path === '/signup')) {
+        window.history.replaceState({}, '', '/')
+        return
+      }
+      if (!token) setAuthMode(path === '/signup' ? 'signup' : 'login')
+    }
+
+    syncAuthRoute()
+    window.addEventListener('popstate', syncAuthRoute)
+    return () => window.removeEventListener('popstate', syncAuthRoute)
+  }, [token, navigateToAuthMode])
+
   const handleLogin = async (event) => {
     event.preventDefault()
     setIsSubmitting(true)
@@ -698,6 +733,8 @@ function App() {
         window.localStorage.setItem('dam_refresh_token', data.refresh)
       }
       setToken(data.access)
+      setAuthStatus('checking')
+      window.history.replaceState({}, '', '/')
       setAuthForm(initialAuthForm)
     } catch (error) {
       setAuthMessage(error.message)
@@ -717,6 +754,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: authForm.username,
+          email: authForm.email,
           password: authForm.password,
         }),
       })
@@ -728,7 +766,7 @@ function App() {
         throw new Error(Array.isArray(errorText) ? errorText[0] : errorText)
       }
 
-      setAuthMode('login')
+      navigateToAuthMode('login')
       setAuthForm(initialAuthForm)
       setAuthMessage('Account created successfully. You can now log in.')
     } catch (error) {
@@ -746,34 +784,43 @@ function App() {
     window.localStorage.removeItem('dam_token')
     window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
-    setAuthMode('login')
+    setAuthStatus('unauthenticated')
+    navigateToAuthMode('login', true)
     setAuthMessage('You have been signed out.')
   }
 
   useEffect(() => {
     if (!token) return
 
-    apiRequest('/api/assets/', { headers: { Authorization: `Bearer ${token}` } })
+    // Session validation may refresh tokens and clear invalid auth state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    apiRequest('/api/accounts/me/', { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => {
         if (response.status === 401 || response.status === 403) {
           clearAuthSession()
+          return
         }
+        if (!response.ok) throw new Error('Unable to validate session.')
+        setAuthStatus('authenticated')
       })
       .catch(() => {
         clearAuthSession()
       })
-  }, [token])
+  }, [token, apiRequest, clearAuthSession])
 
-  if (!token) {
+  if (token && authStatus === 'checking') {
+    return <div className={`session-checking theme-${theme}`} role="status">Checking your session…</div>
+  }
+
+  if (!token || authStatus !== 'authenticated') {
     return (
       <AuthView
         authMode={authMode}
-        setAuthMode={setAuthMode}
+        setAuthMode={navigateToAuthMode}
         authForm={authForm}
         setAuthForm={setAuthForm}
         isSubmitting={isSubmitting}
         authMessage={authMessage}
-        setAuthMessage={setAuthMessage}
         onLogin={handleLogin}
         onSignup={handleSignup}
         theme={theme}
