@@ -104,6 +104,150 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
   )
 }
 
+function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdeas = [] }) {
+  const canvasRef = useRef(null)
+  const isDrawing = useRef(false)
+  const hasDrawing = useRef(false)
+  const [brushColor, setBrushColor] = useState('#243c37')
+  const [brushSize, setBrushSize] = useState(5)
+
+  const getPoint = (event) => {
+    const canvas = canvasRef.current
+    const bounds = canvas.getBoundingClientRect()
+    return {
+      x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
+      y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
+    }
+  }
+
+  const startDrawing = (event) => {
+    const canvas = canvasRef.current
+    const context = canvas.getContext('2d')
+    const { x, y } = getPoint(event)
+    canvas.setPointerCapture(event.pointerId)
+    context.fillStyle = brushColor
+    context.beginPath()
+    const scale = canvas.width / canvas.getBoundingClientRect().width
+    context.arc(x, y, (brushSize * scale) / 2, 0, Math.PI * 2)
+    context.fill()
+    context.beginPath()
+    context.moveTo(x, y)
+    context.strokeStyle = brushColor
+    context.lineWidth = brushSize * scale
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    hasDrawing.current = true
+    isDrawing.current = true
+  }
+
+  const draw = (event) => {
+    if (!isDrawing.current) return
+    const context = canvasRef.current.getContext('2d')
+    const { x, y } = getPoint(event)
+    context.lineTo(x, y)
+    context.stroke()
+    hasDrawing.current = true
+  }
+
+  const finishDrawing = () => {
+    if (!isDrawing.current) return
+    isDrawing.current = false
+    if (hasDrawing.current) onDrawingChange(canvasRef.current.toDataURL('image/png'))
+  }
+
+  const clearDrawing = () => {
+    const canvas = canvasRef.current
+    const context = canvas.getContext('2d')
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    hasDrawing.current = false
+    onDrawingChange('')
+  }
+
+  const chooseIdea = (idea) => {
+    onIdeaSelect(idea.title)
+    const image = new Image()
+    image.onload = () => {
+      const canvas = canvasRef.current
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#fffdf8'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      hasDrawing.current = true
+      onDrawingChange(canvas.toDataURL('image/png'))
+    }
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(idea.svg)}`
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const resizeCanvas = () => {
+      const bounds = canvas.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      const scale = window.devicePixelRatio || 1
+      const width = Math.round(bounds.width * scale)
+      const height = Math.round(bounds.height * scale)
+      if (canvas.width === width && canvas.height === height) return
+      const previous = document.createElement('canvas')
+      previous.width = canvas.width
+      previous.height = canvas.height
+      previous.getContext('2d').drawImage(canvas, 0, 0)
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#fffdf8'
+      context.fillRect(0, 0, width, height)
+      if (hasDrawing.current) context.drawImage(previous, 0, 0, width, height)
+    }
+    const observer = new ResizeObserver(resizeCanvas)
+    observer.observe(canvas)
+    resizeCanvas()
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <section className="doodle-editor" aria-label="Doodle drawing area">
+      <div className="doodle-heading">
+        <div><strong>Draw your asset</strong><span>Sketch directly on the canvas. Your drawing is saved with the asset.</span></div>
+        <button type="button" className="ghost doodle-clear" onClick={clearDrawing}>Clear</button>
+      </div>
+      <div className="doodle-toolbar">
+        <label className="doodle-color-label" title="Brush color">
+          <span>Color</span>
+          <input aria-label="Brush color" type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+        </label>
+        <label className="doodle-size-label">
+          <span>Brush</span>
+          <input aria-label="Brush size" type="range" min="2" max="18" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} />
+        </label>
+        <span className="doodle-hint">Draw with your mouse, finger, or pen</span>
+      </div>
+      {drawingIdeas.length > 0 && (
+        <div className="drawing-ideas">
+          <div className="drawing-ideas-heading"><strong>Suggested doodles</strong><span>Choose a sketch to place it on the canvas</span></div>
+          <div className="drawing-idea-list">
+            {drawingIdeas.map((idea, index) => (
+              <button type="button" key={`${idea.title}-${index}`} className={`drawing-idea ${selectedIdea === idea.title ? 'selected' : ''}`} onClick={() => chooseIdea(idea)} aria-label={`Use suggested doodle ${index + 1}`} title={idea.title}>
+                <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(idea.svg)}`} alt="" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        className="doodle-canvas"
+        onPointerDown={startDrawing}
+        onPointerMove={draw}
+        onPointerUp={finishDrawing}
+        onPointerCancel={finishDrawing}
+        onPointerLeave={finishDrawing}
+        aria-label="Blank white drawing canvas"
+      />
+    </section>
+  )
+}
+
 function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [query, setQuery] = useState('')
@@ -118,11 +262,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
   const [customAssetForm, setCustomAssetForm] = useState(initialCustomAssetForm)
   const [aiSuggestions, setAiSuggestions] = useState(null)
+  const [drawingDataUrl, setDrawingDataUrl] = useState('')
+  const [selectedDrawingIdea, setSelectedDrawingIdea] = useState('')
   const [isAiLoading, setIsAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const fileInput = useRef(null)
 
-  const requestAiSuggestions = async (assetName, assetType) => {
+  const requestAiSuggestions = useCallback(async (assetName, assetType) => {
     const trimmedName = (assetName || '').trim()
     if (!trimmedName) {
       setAiSuggestions(null)
@@ -134,7 +280,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     setAiError('')
 
     try {
-      const response = await fetch('/api/ai/metadata/', {
+      const response = await apiRequest('/api/ai/metadata/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,7 +305,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     } finally {
       setIsAiLoading(false)
     }
-  }
+  }, [apiRequest])
 
   useEffect(() => {
     const trimmedName = customAssetForm.name.trim()
@@ -175,7 +321,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     }, 250)
 
     return () => window.clearTimeout(timer)
-  }, [customAssetForm.name, customAssetForm.type])
+  }, [customAssetForm.name, customAssetForm.type, requestAiSuggestions])
 
   useEffect(() => {
     const token = window.localStorage.getItem('dam_token')
@@ -183,7 +329,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
     apiRequest('/api/assets/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setAssets(Array.isArray(data) ? data : []))
+      .then((data) => setAssets(Array.isArray(data) ? data.map((asset) => ({
+        ...asset,
+        type: asset.metadata?.type || asset.content_type?.split('/').pop()?.toUpperCase() || 'FILE',
+        kind: asset.content_type?.startsWith('video/') ? 'video' : asset.content_type?.startsWith('image/') ? 'image' : 'file',
+        size: `${(Number(asset.size_bytes || 0) / 1024 / 1024).toFixed(1)} MB`,
+        updated: asset.updated_at ? new Date(asset.updated_at).toLocaleDateString() : 'Recently',
+        image: asset.metadata?.doodle_image_data_url || getPlaceholderImage(asset.name),
+      })) : []))
       .catch(() => setAssets([]))
   }, [apiRequest])
 
@@ -312,7 +465,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     }
 
     const token = window.localStorage.getItem('dam_token')
-    const type = customAssetForm.type.toUpperCase()
+    const type = drawingDataUrl ? 'PNG' : customAssetForm.type.toUpperCase()
     const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(type)
     const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(type)
 
@@ -321,11 +474,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         name: trimmedName,
         object_key: `${trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}.${type.toLowerCase()}`,
         content_type: isImage ? 'image/png' : isVideo ? 'video/mp4' : 'application/octet-stream',
-        size_bytes: Number.parseInt(customAssetForm.size, 10) || 120000,
+        size_bytes: drawingDataUrl ? Math.round((drawingDataUrl.length * 3) / 4) : Number.parseInt(customAssetForm.size, 10) || 120000,
         metadata: {
-          source: 'custom_asset',
+          source: drawingDataUrl ? 'doodle_canvas' : 'custom_asset',
           type,
           generated_from: 'custom asset modal',
+          ...(drawingDataUrl ? { doodle_image_data_url: drawingDataUrl } : {}),
         },
       }
 
@@ -351,12 +505,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         size: customAssetForm.size || `${Math.max(1, Math.round((data.size_bytes || 120000) / 1024 / 1024))} MB`,
         color: ['coral', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)],
         updated: 'Just now',
-        image: getPlaceholderImage(trimmedName),
+        image: drawingDataUrl || getPlaceholderImage(trimmedName),
       }
 
       setAssets((current) => [newAsset, ...current])
       setCustomAssetOpen(false)
       setCustomAssetForm(initialCustomAssetForm)
+      setDrawingDataUrl('')
+      setSelectedDrawingIdea('')
       showNotice(`${trimmedName} created successfully.`)
     } catch (error) {
       showNotice(error.message || 'Unable to create asset.')
@@ -399,7 +555,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
             </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
-            <button className="upload secondary" type="button" onClick={() => setCustomAssetOpen(true)}>+ Create asset</button>
+            <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
             <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
           </div>
         </header>
@@ -492,6 +648,45 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
               <p>Add a new asset entry to your personal library.</p>
             </div>
             <div className="create-asset-form">
+              <div className="ai-suggestions">
+                <div className="ai-suggestions-header">
+                  <span>AI suggestions</span>
+                  <button type="button" className="ghost ai-refresh" onClick={() => requestAiSuggestions(customAssetForm.name, customAssetForm.type)}>Refresh</button>
+                </div>
+
+                {isAiLoading ? (
+                  <div className="ai-suggestion-box">
+                    <p>Generating asset and doodle suggestions…</p>
+                  </div>
+                ) : aiError ? (
+                  <div className="ai-suggestion-box">
+                    <p className="ai-error">{aiError}</p>
+                  </div>
+                ) : aiSuggestions ? (
+                  <>
+                    <div className="ai-suggestion-box">
+                      <p><strong>Filename:</strong> {aiSuggestions.filename}</p>
+                      <p><strong>Alt text:</strong> {aiSuggestions.alt_text}</p>
+                      <p><strong>Caption:</strong> {aiSuggestions.caption}</p>
+                      <p><strong>Tags:</strong> {aiSuggestions.tags?.join(', ')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="upload secondary ai-apply"
+                      onClick={() => setCustomAssetForm((current) => ({
+                        ...current,
+                        name: current.name || aiSuggestions.filename.replace(/\.[^.]+$/, ''),
+                      }))}
+                    >
+                      Use suggested name
+                    </button>
+                  </>
+                ) : (
+                  <div className="ai-suggestion-box">
+                    <p>Enter an asset name for metadata and drawing suggestions.</p>
+                  </div>
+                )}
+              </div>
               <label>
                 <span>Asset name</span>
                 <input
@@ -524,45 +719,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                   />
                 </label>
               </div>
-              <div className="ai-suggestions">
-                <div className="ai-suggestions-header">
-                  <span>AI suggestions</span>
-                  <button type="button" className="ghost ai-refresh" onClick={() => requestAiSuggestions(customAssetForm.name, customAssetForm.type)}>Refresh</button>
-                </div>
-
-                {isAiLoading ? (
-                  <div className="ai-suggestion-box">
-                    <p>Generating metadata suggestions…</p>
-                  </div>
-                ) : aiError ? (
-                  <div className="ai-suggestion-box">
-                    <p className="ai-error">{aiError}</p>
-                  </div>
-                ) : aiSuggestions ? (
-                  <>
-                    <div className="ai-suggestion-box">
-                      <p><strong>Filename:</strong> {aiSuggestions.filename}</p>
-                      <p><strong>Alt text:</strong> {aiSuggestions.alt_text}</p>
-                      <p><strong>Caption:</strong> {aiSuggestions.caption}</p>
-                      <p><strong>Tags:</strong> {aiSuggestions.tags?.join(', ')}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="upload secondary ai-apply"
-                      onClick={() => setCustomAssetForm((current) => ({
-                        ...current,
-                        name: current.name || aiSuggestions.filename.replace(/\.[^.]+$/, ''),
-                      }))}
-                    >
-                      Use suggested name
-                    </button>
-                  </>
-                ) : (
-                  <div className="ai-suggestion-box">
-                    <p>Enter an asset name to generate AI metadata suggestions.</p>
-                  </div>
-                )}
-              </div>
+              <DoodleCanvas
+                onDrawingChange={setDrawingDataUrl}
+                selectedIdea={selectedDrawingIdea}
+                onIdeaSelect={setSelectedDrawingIdea}
+                drawingIdeas={aiSuggestions?.drawing_ideas || []}
+              />
               <div className="create-asset-actions">
                 <button type="button" className="ghost create-cancel" onClick={() => setCustomAssetOpen(false)}>Cancel</button>
                 <button type="button" className="upload create-submit" onClick={handleCreateCustomAsset}>Save asset</button>

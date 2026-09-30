@@ -706,6 +706,8 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 
 .create-asset-modal {
   width: min(560px, 90vw);
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .create-asset-form {
@@ -739,6 +741,145 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
+}
+
+.doodle-editor {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e3e9e5;
+  border-radius: 14px;
+  background: #f8faf8;
+}
+
+.doodle-heading,
+.doodle-toolbar,
+.drawing-ideas-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.doodle-heading > div,
+.drawing-ideas-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.doodle-heading strong,
+.drawing-ideas-heading strong {
+  color: #203b35;
+  font-size: 13px;
+}
+
+.doodle-heading span,
+.drawing-ideas-heading span,
+.doodle-hint {
+  color: #788681;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.doodle-clear {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+}
+
+.doodle-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 9px 11px;
+  border: 1px solid #e6ece8;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.doodle-color-label,
+.doodle-size-label {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  color: #56635e !important;
+  font-size: 11px !important;
+}
+
+.doodle-color-label input[type="color"] {
+  width: 30px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid #dfe6e1;
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.doodle-size-label input[type="range"] {
+  width: 92px;
+  padding: 0;
+  accent-color: #183d36;
+}
+
+.doodle-hint {
+  margin-left: auto;
+}
+
+.doodle-canvas {
+  display: block;
+  width: 100%;
+  height: clamp(220px, 34vh, 360px);
+  box-sizing: border-box;
+  border: 1px solid #dfe6e1;
+  border-radius: 10px;
+  background: #fff;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.drawing-ideas {
+  display: grid;
+  gap: 9px;
+  padding-top: 2px;
+}
+
+.drawing-idea-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.drawing-idea {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px;
+  border: 2px solid #dce6df;
+  border-radius: 11px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.drawing-idea img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.55;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
+.drawing-idea:hover,
+.drawing-idea.selected {
+  border-color: #73927f;
+  box-shadow: 0 0 0 2px rgba(115, 146, 127, 0.16);
+}
+
+@media (max-width: 620px) {
+  .doodle-canvas {
+    height: clamp(190px, 38vh, 280px);
+  }
+
+  .drawing-idea-list {
+    gap: 6px;
+  }
 }
 
 .ai-suggestions {
