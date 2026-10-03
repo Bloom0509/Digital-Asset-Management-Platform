@@ -21,6 +21,16 @@ const getPlaceholderImage = (name) => {
 
 const emptyAssets = []
 
+const mapApiAsset = (asset, index = 0) => ({
+  ...asset,
+  type: asset.metadata?.type || asset.content_type?.split('/').pop()?.toUpperCase() || 'FILE',
+  kind: asset.content_type?.startsWith('video/') ? 'video' : asset.content_type?.startsWith('image/') ? 'image' : 'file',
+  size: `${(Number(asset.size_bytes || 0) / 1024 / 1024).toFixed(1)} MB`,
+  color: ['coral', 'blue', 'green', 'yellow'][index % 4],
+  updated: asset.updated_at ? new Date(asset.updated_at).toLocaleDateString() : 'Recently',
+  image: asset.metadata?.doodle_image_data_url || getPlaceholderImage(asset.name),
+})
+
 const initialAuthForm = {
   username: '',
   email: '',
@@ -250,6 +260,8 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
 
 function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [assets, setAssets] = useState(emptyAssets)
+  const [trashAssets, setTrashAssets] = useState(emptyAssets)
+  const [activeSection, setActiveSection] = useState('assets')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [filter, setFilter] = useState('all')
@@ -329,16 +341,26 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
     apiRequest('/api/assets/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setAssets(Array.isArray(data) ? data.map((asset) => ({
-        ...asset,
-        type: asset.metadata?.type || asset.content_type?.split('/').pop()?.toUpperCase() || 'FILE',
-        kind: asset.content_type?.startsWith('video/') ? 'video' : asset.content_type?.startsWith('image/') ? 'image' : 'file',
-        size: `${(Number(asset.size_bytes || 0) / 1024 / 1024).toFixed(1)} MB`,
-        updated: asset.updated_at ? new Date(asset.updated_at).toLocaleDateString() : 'Recently',
-        image: asset.metadata?.doodle_image_data_url || getPlaceholderImage(asset.name),
-      })) : []))
+      .then((data) => setAssets(Array.isArray(data) ? data.map(mapApiAsset) : []))
       .catch(() => setAssets([]))
+
+    apiRequest('/api/assets/trash/', { headers })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setTrashAssets(Array.isArray(data) ? data.map(mapApiAsset) : []))
+      .catch(() => setTrashAssets([]))
   }, [apiRequest])
+
+  const openTrash = async () => {
+    setActiveSection('trash')
+    try {
+      const response = await apiRequest('/api/assets/trash/')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.detail || 'Unable to load the trash.')
+      setTrashAssets(Array.isArray(data) ? data.map(mapApiAsset) : [])
+    } catch (error) {
+      showNotice(error.message || 'Unable to load the trash.')
+    }
+  }
 
   useEffect(() => {
     if (!notice) return
@@ -354,10 +376,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  const currentAssets = activeSection === 'trash' ? trashAssets : assets
   const visibleAssets = useMemo(() => {
-    const filtered = assets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
+    const filtered = currentAssets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
-  }, [assets, filter, query, sort])
+  }, [currentAssets, filter, query, sort])
 
   const totalAssetCount = assets.length
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
@@ -409,11 +432,52 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     }
   }
 
-  const deleteAsset = (name) => {
-    setAssets((current) => current.filter((asset) => asset.name !== name))
-    setSelected((current) => current.filter((item) => item !== name))
-    setStarred((current) => current.filter((item) => item !== name))
-    showNotice(`${name} deleted.`)
+  const deleteAsset = async (asset) => {
+    try {
+      const isPersisted = /^[0-9a-f-]{36}$/i.test(asset.id || '')
+      if (isPersisted) {
+        const response = await apiRequest(`/api/assets/${asset.id}/`, { method: 'DELETE' })
+        if (!response.ok) throw new Error('Unable to move this asset to trash.')
+      }
+      setAssets((current) => current.filter((item) => item.id !== asset.id))
+      setTrashAssets((current) => [{ ...asset, deleted_at: new Date().toISOString() }, ...current.filter((item) => item.id !== asset.id)])
+      setSelected((current) => current.filter((item) => item !== asset.name))
+      setStarred((current) => current.filter((item) => item !== asset.name))
+      showNotice(`${asset.name} moved to trash.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to move this asset to trash.')
+    }
+  }
+
+  const restoreAsset = async (asset) => {
+    try {
+      const isPersisted = /^[0-9a-f-]{36}$/i.test(asset.id || '')
+      if (isPersisted) {
+        const response = await apiRequest(`/api/assets/${asset.id}/restore/`, { method: 'POST' })
+        if (!response.ok) throw new Error('Unable to restore this asset.')
+      }
+      const restored = { ...asset, deleted_at: null }
+      setTrashAssets((current) => current.filter((item) => item.id !== asset.id))
+      setAssets((current) => [restored, ...current.filter((item) => item.id !== asset.id)])
+      showNotice(`${asset.name} restored.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to restore this asset.')
+    }
+  }
+
+  const permanentlyDeleteAsset = async (asset) => {
+    if (!window.confirm(`Permanently delete ${asset.name}? This cannot be undone.`)) return
+    try {
+      const isPersisted = /^[0-9a-f-]{36}$/i.test(asset.id || '')
+      if (isPersisted) {
+        const response = await apiRequest(`/api/assets/${asset.id}/permanent-delete/`, { method: 'DELETE' })
+        if (!response.ok) throw new Error('Unable to permanently delete this asset.')
+      }
+      setTrashAssets((current) => current.filter((item) => item.id !== asset.id))
+      showNotice(`${asset.name} permanently deleted.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to permanently delete this asset.')
+    }
   }
 
   const renameAsset = (asset) => {
@@ -468,11 +532,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     const type = drawingDataUrl ? 'PNG' : customAssetForm.type.toUpperCase()
     const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(type)
     const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(type)
+    const creationId = crypto.randomUUID()
 
     try {
       const payload = {
         name: trimmedName,
-        object_key: `${trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}.${type.toLowerCase()}`,
+        object_key: `${trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${creationId}.${type.toLowerCase()}`,
         content_type: isImage ? 'image/png' : isVideo ? 'video/mp4' : 'application/octet-stream',
         size_bytes: drawingDataUrl ? Math.round((drawingDataUrl.length * 3) / 4) : Number.parseInt(customAssetForm.size, 10) || 120000,
         metadata: {
@@ -498,12 +563,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       }
 
       const newAsset = {
-        id: data.id || `custom-${Date.now()}`,
+        id: data.id || `custom-${creationId}`,
         name: data.name || trimmedName,
         type: data.metadata?.type || type,
         kind: isImage ? 'image' : isVideo ? 'video' : 'file',
         size: customAssetForm.size || `${Math.max(1, Math.round((data.size_bytes || 120000) / 1024 / 1024))} MB`,
-        color: ['coral', 'blue', 'green', 'yellow'][Math.floor(Math.random() * 4)],
+        color: ['coral', 'blue', 'green', 'yellow'][hashCode(trimmedName) % 4],
         updated: 'Just now',
         image: drawingDataUrl || getPlaceholderImage(trimmedName),
       }
@@ -525,10 +590,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         <div className="wordmark">Digital Asset</div>
         <nav>
           <p className="nav-label">Workspace</p>
-          <button className="active" type="button" onClick={() => showNotice('Showing all assets')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
+          <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => setActiveSection('assets')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
           <button type="button" onClick={() => showNotice('Collections view is coming next.')}><span>□</span> Collections</button>
           <button type="button" onClick={() => showNotice('No shared assets yet.')}><span>↗</span> Shared with me</button>
-          <button type="button" onClick={() => showNotice('Trash is empty.')}><span>⌫</span> Trash</button>
+          <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
           <button type="button" onClick={() => showNotice('Activity view is coming next.')}><span>◷</span> Activity</button>
           <button type="button" onClick={() => showNotice('Settings view is coming next.')}><span>⚙</span> Settings</button>
@@ -548,7 +613,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>All assets</strong></div>
+          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : 'All assets'}</strong></div>
           <div className="top-actions">
             <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? '☀️' : '🌙'}
@@ -564,8 +629,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
           <div className="title-row">
             <div>
               <p className="eyebrow">LIBRARY</p>
-              <h1>All assets <span>{totalAssetCount}</span></h1>
-              <p className="intro">Your asset library is empty until you upload files.</p>
+              <h1>{activeSection === 'trash' ? 'Trash' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : totalAssetCount}</span></h1>
+              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
             <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>
           </div>
@@ -618,7 +683,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                         <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); setPreviewAsset(asset) }}>Open preview</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); downloadAsset(asset) }}>Download</button>
-                        <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset.name) }}>Delete</button>
+                        {activeSection === 'trash' ? (
+                          <>
+                            <button type="button" onClick={(event) => { event.stopPropagation(); restoreAsset(asset) }}>Restore</button>
+                            <button type="button" onClick={(event) => { event.stopPropagation(); permanentlyDeleteAsset(asset) }}>Delete permanently</button>
+                          </>
+                        ) : (
+                          <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset) }}>Move to trash</button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -627,13 +699,16 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                       <h2>{asset.name}</h2>
                       <p>{asset.size} <span>·</span> {asset.updated}</p>
                     </div>
-                    <button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} type="button" onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button>
+                    {activeSection !== 'trash' && <button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} type="button" onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button>}
                   </div>
                 </article>
               ))}
             </div>
           ) : (
-            <div className="empty"><strong>No assets yet</strong><span>Upload a new file to start your library.</span></div>
+            <div className="empty">
+              <strong>{activeSection === 'trash' ? 'Trash is empty' : 'No assets yet'}</strong>
+              <span>{activeSection === 'trash' ? 'Deleted assets will appear here.' : 'Upload a new file to start your library.'}</span>
+            </div>
           )}
         </section>
       </main>
