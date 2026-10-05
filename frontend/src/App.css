@@ -936,6 +936,110 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   border: 0;
 }
 
+.collection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+}
+
+.collection-card {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  min-height: 155px;
+  padding: 20px;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 22px var(--shadow);
+}
+
+.collection-card:hover {
+  border-color: #a8c779;
+  transform: translateY(-2px);
+}
+
+.collection-card strong {
+  font-size: 15px;
+}
+
+.collection-card > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.collection-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 22px;
+}
+
+.collection-modal {
+  display: grid;
+  gap: 18px;
+  max-width: 460px;
+  padding: 30px;
+}
+
+.collection-modal > label {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.collection-modal input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  background: var(--toolbar-bg);
+  color: var(--toolbar-text);
+}
+
+.collection-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.collection-picker button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.collection-picker button:hover {
+  border-color: #a8c779;
+  background: var(--green-soft);
+}
+
+.collection-picker button b {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.collection-picker-empty {
+  padding: 25px 12px;
+}
+
 @media (max-width: 920px) {
   .auth-shell {
     grid-template-columns: 1fr;

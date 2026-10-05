@@ -261,7 +261,12 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
 function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [trashAssets, setTrashAssets] = useState(emptyAssets)
+  const [collections, setCollections] = useState(emptyAssets)
   const [activeSection, setActiveSection] = useState('assets')
+  const [activeCollectionId, setActiveCollectionId] = useState(null)
+  const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [assetToCollect, setAssetToCollect] = useState(null)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [filter, setFilter] = useState('all')
@@ -348,7 +353,83 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setTrashAssets(Array.isArray(data) ? data.map(mapApiAsset) : []))
       .catch(() => setTrashAssets([]))
+
+    apiRequest('/api/collections/', { headers })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setCollections(Array.isArray(data) ? data : []))
+      .catch(() => setCollections([]))
   }, [apiRequest])
+
+  const openCollections = async () => {
+    setActiveSection('collections')
+    setActiveCollectionId(null)
+    try {
+      const response = await apiRequest('/api/collections/')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.detail || 'Unable to load collections.')
+      setCollections(Array.isArray(data) ? data : [])
+    } catch (error) {
+      showNotice(error.message || 'Unable to load collections.')
+    }
+  }
+
+  const createCollection = async (event) => {
+    event.preventDefault()
+    const name = collectionName.trim()
+    if (!name) return
+    try {
+      const response = await apiRequest('/api/collections/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.name?.[0] || data?.detail || 'Unable to create collection.')
+      setCollections((current) => [data, ...current])
+      setCollectionName('')
+      setIsCreateCollectionOpen(false)
+      showNotice(`Collection “${data.name}” created.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to create collection.')
+    }
+  }
+
+  const addAssetToCollection = async (collection) => {
+    if (!assetToCollect?.id || !/^[0-9a-f-]{36}$/i.test(assetToCollect.id)) {
+      showNotice('Only saved assets can be added to a collection.')
+      setAssetToCollect(null)
+      return
+    }
+    try {
+      const response = await apiRequest(`/api/collections/${collection.id}/assets/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: [assetToCollect.id] }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.detail || data?.asset_ids || 'Unable to add this asset.')
+      setCollections((current) => current.map((item) => item.id === data.id ? data : item))
+      setAssetToCollect(null)
+      showNotice(`${assetToCollect.name} added to ${data.name}.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to add this asset.')
+    }
+  }
+
+  const removeAssetFromCollection = async (asset) => {
+    if (!activeCollection) return
+    try {
+      const response = await apiRequest(`/api/collections/${activeCollection.id}/remove-asset/?asset_id=${asset.id}`, {
+        method: 'DELETE',
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.detail || 'Unable to remove this media from the collection.')
+      setCollections((current) => current.map((item) => item.id === data.id ? data : item))
+      showNotice(`${asset.name} removed from ${data.name}.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to remove this media from the collection.')
+    }
+  }
 
   const openTrash = async () => {
     setActiveSection('trash')
@@ -376,7 +457,16 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const currentAssets = activeSection === 'trash' ? trashAssets : assets
+  const activeCollection = collections.find((collection) => collection.id === activeCollectionId)
+  const collectionAssets = (activeCollection?.assets || []).map((asset, index) => {
+    const savedAsset = assets.find((item) => item.id === asset.id)
+    return savedAsset || mapApiAsset(asset, index)
+  })
+  const currentAssets = activeSection === 'trash'
+    ? trashAssets
+    : activeSection === 'collection'
+      ? collectionAssets
+      : assets
   const visibleAssets = useMemo(() => {
     const filtered = currentAssets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
@@ -591,7 +681,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         <nav>
           <p className="nav-label">Workspace</p>
           <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => setActiveSection('assets')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
-          <button type="button" onClick={() => showNotice('Collections view is coming next.')}><span>□</span> Collections</button>
+          <button className={activeSection === 'collections' || activeSection === 'collection' ? 'active' : ''} type="button" onClick={openCollections}><span>□</span> Collections <b>{collections.length}</b></button>
           <button type="button" onClick={() => showNotice('No shared assets yet.')}><span>↗</span> Shared with me</button>
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
@@ -613,29 +703,32 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : 'All assets'}</strong></div>
+          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : 'All assets'}</strong></div>
           <div className="top-actions">
             <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
-            <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
-            <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
+            {activeSection === 'collections' && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
+            {activeSection !== 'collections' && activeSection !== 'collection' && <>
+              <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
+              <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
+            </>}
           </div>
         </header>
 
         <section className="content" id="assets">
           <div className="title-row">
             <div>
-              <p className="eyebrow">LIBRARY</p>
-              <h1>{activeSection === 'trash' ? 'Trash' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : totalAssetCount}</span></h1>
-              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : 'Your asset library is empty until you upload files.'}</p>
+              <p className="eyebrow">{activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
+              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : totalAssetCount}</span></h1>
+              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
-            <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>
+            {activeSection !== 'collections' && <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>}
           </div>
 
-          <div className="toolbar">
+          {activeSection !== 'collections' && <div className="toolbar">
             <label className="search"><span>/</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label>
             <select className="filter" value={filter} onChange={(event) => setFilter(event.target.value)}>
               <option value="all">Filter: all types</option>
@@ -649,17 +742,31 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
             </select>
             <button className={`view-toggle ${view === 'grid' ? '' : 'muted'}`} type="button" onClick={() => setView('grid')} aria-label="Grid view">▦</button>
             <button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} type="button" onClick={() => setView('list')} aria-label="List view">☷</button>
-          </div>
+          </div>}
 
-          <div className="summary">
+          {activeSection !== 'collections' && <div className="summary">
             <span><b>{visibleAssets.length}</b> assets shown</span>
             <span className="dot-separator" />
             <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
             <span className="summary-spacer" />
             <span className="sync">● {totalAssetCount > 0 ? 'Library active' : 'No files yet'}</span>
-          </div>
+          </div>}
 
-          {visibleAssets.length ? (
+          {activeSection === 'collections' ? (
+            collections.length ? (
+              <div className="collection-grid">
+                {collections.map((collection) => (
+                  <button className="collection-card" type="button" key={collection.id} onClick={() => { setActiveCollectionId(collection.id); setActiveSection('collection') }}>
+                    <span className="collection-icon">□</span>
+                    <strong>{collection.name}</strong>
+                    <span>{collection.assets?.length || 0} media</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="empty"><strong>No collections yet</strong><span>Create a collection to start organizing media.</span></div>
+            )
+          ) : visibleAssets.length ? (
             <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>
               {visibleAssets.map((asset, index) => (
                 <article
@@ -688,8 +795,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                             <button type="button" onClick={(event) => { event.stopPropagation(); restoreAsset(asset) }}>Restore</button>
                             <button type="button" onClick={(event) => { event.stopPropagation(); permanentlyDeleteAsset(asset) }}>Delete permanently</button>
                           </>
+                        ) : activeSection === 'collection' ? (
+                          <button type="button" onClick={(event) => { event.stopPropagation(); removeAssetFromCollection(asset) }}>Remove from collection</button>
                         ) : (
-                          <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset) }}>Move to trash</button>
+                          <>
+                            <button type="button" onClick={(event) => { event.stopPropagation(); setAssetToCollect(asset); setMenu(null) }}>Add to collection</button>
+                            <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset) }}>Move to trash</button>
+                          </>
                         )}
                       </div>
                     )}
@@ -714,6 +826,47 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       </main>
 
       {notice && <div className="toast">{notice}</div>}
+      {isCreateCollectionOpen && (
+        <div className="modal-backdrop" onClick={() => setIsCreateCollectionOpen(false)}>
+          <form className="asset-modal collection-modal" onSubmit={createCollection} onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setIsCreateCollectionOpen(false)}>×</button>
+            <div className="asset-modal-copy">
+              <h3>Create a collection</h3>
+              <p>Give this collection a name. You can add media to it from the asset menu.</p>
+            </div>
+            <label>
+              <span>Collection name</span>
+              <input autoFocus maxLength={200} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="Campaigns" required />
+            </label>
+            <div className="create-asset-actions">
+              <button type="button" className="ghost create-cancel" onClick={() => setIsCreateCollectionOpen(false)}>Cancel</button>
+              <button type="submit" className="upload create-submit">Create collection</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {assetToCollect && (
+        <div className="modal-backdrop" onClick={() => setAssetToCollect(null)}>
+          <div className="asset-modal collection-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setAssetToCollect(null)}>×</button>
+            <div className="asset-modal-copy">
+              <h3>Add to collection</h3>
+              <p>Choose a collection for {assetToCollect.name}.</p>
+            </div>
+            {collections.length ? (
+              <div className="collection-picker">
+                {collections.map((collection) => (
+                  <button type="button" key={collection.id} onClick={() => addAssetToCollection(collection)}>
+                    <span>□</span>{collection.name}<b>{collection.assets?.length || 0}</b>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="empty collection-picker-empty"><strong>No collections yet</strong><span>Create one from the Collections section first.</span></div>
+            )}
+          </div>
+        </div>
+      )}
       {customAssetOpen && (
         <div className="modal-backdrop" onClick={() => setCustomAssetOpen(false)}>
           <div className="asset-modal create-asset-modal" onClick={(event) => event.stopPropagation()}>
