@@ -462,6 +462,19 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     const savedAsset = assets.find((item) => item.id === asset.id)
     return savedAsset || mapApiAsset(asset, index)
   })
+  const getCollectionThumbnails = (collection) => {
+    const collectionAssets = (collection?.assets || []).map(
+      (asset) => assets.find((item) => item.id === asset.id) || mapApiAsset(asset),
+    )
+    const imageAssets = collectionAssets.filter((asset) => asset.kind === 'image')
+    const visibleImages = imageAssets.slice(0, 4)
+
+    return {
+      imageAssets: visibleImages,
+      imageCount: imageAssets.length,
+      remainingCount: Math.max(0, imageAssets.length - visibleImages.length),
+    }
+  }
   const currentAssets = activeSection === 'trash'
     ? trashAssets
     : activeSection === 'collection'
@@ -755,13 +768,23 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
           {activeSection === 'collections' ? (
             collections.length ? (
               <div className="collection-grid">
-                {collections.map((collection) => (
-                  <button className="collection-card" type="button" key={collection.id} onClick={() => { setActiveCollectionId(collection.id); setActiveSection('collection') }}>
-                    <span className="collection-icon">□</span>
-                    <strong>{collection.name}</strong>
-                    <span>{collection.assets?.length || 0} media</span>
-                  </button>
-                ))}
+                {collections.map((collection) => {
+                  const { imageAssets, imageCount, remainingCount } = getCollectionThumbnails(collection)
+                  return (
+                    <button className="collection-card" type="button" key={collection.id} onClick={() => { setActiveCollectionId(collection.id); setActiveSection('collection') }}>
+                      <span className="collection-thumbnails" aria-label={`${imageCount} collection images`}>
+                        {imageAssets.length ? imageAssets.map((asset) => (
+                          <span className="collection-thumbnail" key={asset.id}>
+                            <img src={asset.image} alt={asset.name} loading="lazy" />
+                          </span>
+                        )) : <span className="collection-thumbnail-empty">□</span>}
+                        {remainingCount > 0 && <span className="collection-thumbnail-more">+{remainingCount}</span>}
+                      </span>
+                      <strong>{collection.name}</strong>
+                      <span>{collection.assets?.length || 0} media</span>
+                    </button>
+                  )
+                })}
               </div>
             ) : (
               <div className="empty"><strong>No collections yet</strong><span>Create a collection to start organizing media.</span></div>

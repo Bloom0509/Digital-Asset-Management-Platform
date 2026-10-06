@@ -940,11 +940,12 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 16px;
+  margin-top: 32px;
 }
 
 .collection-card {
   display: grid;
-  justify-items: start;
+  justify-items: stretch;
   gap: 12px;
   min-height: 155px;
   padding: 20px;
@@ -971,15 +972,55 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   font-size: 12px;
 }
 
-.collection-icon {
+.collection-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  min-height: 54px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.collection-thumbnail {
+  position: relative;
+  min-width: 0;
+  height: 54px;
+  overflow: hidden;
+  background: var(--green-soft);
+}
+
+.collection-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.collection-thumbnail-more {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.collection-thumbnail-empty {
+  display: grid;
+  place-items: center;
+  grid-column: 1 / -1;
+  min-height: 54px;
+  border: 1px dashed var(--card-border);
+  border-radius: 9px;
   background: var(--green-soft);
   color: var(--green-deep);
   font-size: 22px;
+}
+
+.collection-icon {
+  display: none;
 }
 
 .collection-modal {
