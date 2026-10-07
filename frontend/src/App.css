@@ -972,6 +972,57 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   font-size: 12px;
 }
 
+.activity-feed {
+  display: grid;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 17px 18px;
+  border: 1px solid var(--card-border);
+  border-radius: 11px;
+  background: var(--card);
+  box-shadow: 0 8px 18px var(--shadow);
+}
+
+.activity-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.activity-icon.error {
+  background: #f7d9d2;
+  color: #a33c2f;
+}
+
+.activity-item p {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.activity-item time {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.activity-empty {
+  margin-top: 32px;
+}
+
 .collection-thumbnails {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

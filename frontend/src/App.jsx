@@ -273,6 +273,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [view, setView] = useState('grid')
   const [selected, setSelected] = useState([])
   const [starred, setStarred] = useState([])
+  const [activities, setActivities] = useState([])
   const [notice, setNotice] = useState('')
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
@@ -283,6 +284,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [selectedDrawingIdea, setSelectedDrawingIdea] = useState('')
   const [isAiLoading, setIsAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
+  const activityCounter = useRef(0)
   const fileInput = useRef(null)
 
   const requestAiSuggestions = useCallback(async (assetName, assetType) => {
@@ -489,7 +491,15 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
 
   const toggleStar = (name) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
-  const showNotice = (message) => {
+  const showNotice = (message, type = 'activity') => {
+    const activity = {
+      id: `activity-${activityCounter.current}`,
+      message,
+      type,
+      timestamp: null,
+    }
+    activityCounter.current += 1
+    setActivities((current) => [activity, ...current].slice(0, 100))
     setNotice(message)
     setMenu(null)
   }
@@ -698,7 +708,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
           <button type="button" onClick={() => showNotice('No shared assets yet.')}><span>↗</span> Shared with me</button>
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
-          <button type="button" onClick={() => showNotice('Activity view is coming next.')}><span>◷</span> Activity</button>
+          <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => setActiveSection('activity')}><span>◷</span> Activity <b>{activities.length}</b></button>
           <button type="button" onClick={() => showNotice('Settings view is coming next.')}><span>⚙</span> Settings</button>
           <div className="favorites-panel">
             <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
@@ -716,7 +726,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : 'All assets'}</strong></div>
+          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : 'All assets'}</strong></div>
           <div className="top-actions">
             <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? '☀️' : '🌙'}
@@ -734,14 +744,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         <section className="content" id="assets">
           <div className="title-row">
             <div>
-              <p className="eyebrow">{activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
-              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : totalAssetCount}</span></h1>
-              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : 'Your asset library is empty until you upload files.'}</p>
+              <p className="eyebrow">{activeSection === 'activity' ? 'LIVE UPDATES' : activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
+              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : totalAssetCount}</span></h1>
+              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
-            {activeSection !== 'collections' && <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>}
+            {activeSection !== 'collections' && activeSection !== 'activity' && <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>}
           </div>
 
-          {activeSection !== 'collections' && <div className="toolbar">
+          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="toolbar">
             <label className="search"><span>/</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label>
             <select className="filter" value={filter} onChange={(event) => setFilter(event.target.value)}>
               <option value="all">Filter: all types</option>
@@ -757,7 +767,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
             <button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} type="button" onClick={() => setView('list')} aria-label="List view">☷</button>
           </div>}
 
-          {activeSection !== 'collections' && <div className="summary">
+          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="summary">
             <span><b>{visibleAssets.length}</b> assets shown</span>
             <span className="dot-separator" />
             <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
@@ -765,7 +775,23 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
             <span className="sync">● {totalAssetCount > 0 ? 'Library active' : 'No files yet'}</span>
           </div>}
 
-          {activeSection === 'collections' ? (
+          {activeSection === 'activity' ? (
+            activities.length ? (
+              <div className="activity-feed">
+                {activities.map((activity) => (
+                  <article className="activity-item" key={activity.id}>
+                    <span className={`activity-icon ${activity.type}`}>{activity.type === 'error' ? '!' : '◷'}</span>
+                    <div>
+                      <p>{activity.message}</p>
+                      <time>Just now</time>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty activity-empty"><strong>No activity yet</strong><span>Actions in your workspace will appear here in real time.</span></div>
+            )
+          ) : activeSection === 'collections' ? (
             collections.length ? (
               <div className="collection-grid">
                 {collections.map((collection) => {
