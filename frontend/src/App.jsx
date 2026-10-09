@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 
 const hashCode = (str) => {
@@ -262,8 +263,6 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [trashAssets, setTrashAssets] = useState(emptyAssets)
   const [collections, setCollections] = useState(emptyAssets)
-  const [activeSection, setActiveSection] = useState('assets')
-  const [activeCollectionId, setActiveCollectionId] = useState(null)
   const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false)
   const [collectionName, setCollectionName] = useState('')
   const [assetToCollect, setAssetToCollect] = useState(null)
@@ -286,6 +285,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [aiError, setAiError] = useState('')
   const activityCounter = useRef(0)
   const fileInput = useRef(null)
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const requestAiSuggestions = useCallback(async (assetName, assetType) => {
     const trimmedName = (assetName || '').trim()
@@ -363,8 +364,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   }, [apiRequest])
 
   const openCollections = async () => {
-    setActiveSection('collections')
-    setActiveCollectionId(null)
+    navigate('/collections')
     try {
       const response = await apiRequest('/api/collections/')
       const data = await response.json()
@@ -434,7 +434,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   }
 
   const openTrash = async () => {
-    setActiveSection('trash')
+    navigate('/trash')
     try {
       const response = await apiRequest('/api/assets/trash/')
       const data = await response.json()
@@ -444,6 +444,36 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       showNotice(error.message || 'Unable to load the trash.')
     }
   }
+
+  const routeState = useMemo(() => {
+    const path = location.pathname || '/'
+
+    if (path === '/' || path === '') {
+      return { activeSection: 'assets', activeCollectionId: null }
+    }
+
+    if (path === '/collections' || path === '/collection') {
+      return { activeSection: 'collections', activeCollectionId: null }
+    }
+
+    if (path === '/trash') {
+      return { activeSection: 'trash', activeCollectionId: null }
+    }
+
+    if (path === '/activity') {
+      return { activeSection: 'activity', activeCollectionId: null }
+    }
+
+    if (path.startsWith('/collection/')) {
+      const collectionId = path.split('/collection/')[1]?.split('/')[0]
+      return { activeSection: 'collection', activeCollectionId: collectionId || null }
+    }
+
+    return { activeSection: 'assets', activeCollectionId: null }
+  }, [location.pathname])
+
+  const activeSection = routeState.activeSection
+  const activeCollectionId = routeState.activeCollectionId
 
   useEffect(() => {
     if (!notice) return
@@ -703,13 +733,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
         <div className="wordmark">Digital Asset</div>
         <nav>
           <p className="nav-label">Workspace</p>
-          <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => setActiveSection('assets')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
+          <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => navigate('/')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
           <button className={activeSection === 'collections' || activeSection === 'collection' ? 'active' : ''} type="button" onClick={openCollections}><span>□</span> Collections <b>{collections.length}</b></button>
-          <button type="button" onClick={() => showNotice('No shared assets yet.')}><span>↗</span> Shared with me</button>
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
-          <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => setActiveSection('activity')}><span>◷</span> Activity <b>{activities.length}</b></button>
-          <button type="button" onClick={() => showNotice('Settings view is coming next.')}><span>⚙</span> Settings</button>
+          <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => navigate('/activity')}><span>◷</span> Activity <b>{activities.length}</b></button>
           <div className="favorites-panel">
             <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
             {favoriteAssets.length ? favoriteAssets.map((asset) => (
@@ -797,7 +825,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                 {collections.map((collection) => {
                   const { imageAssets, imageCount, remainingCount } = getCollectionThumbnails(collection)
                   return (
-                    <button className="collection-card" type="button" key={collection.id} onClick={() => { setActiveCollectionId(collection.id); setActiveSection('collection') }}>
+                    <button className="collection-card" type="button" key={collection.id} onClick={() => navigate(`/collection/${collection.id}`)}>
                       <span className="collection-thumbnails" aria-label={`${imageCount} collection images`}>
                         {imageAssets.length ? imageAssets.map((asset) => (
                           <span className="collection-thumbnail" key={asset.id}>
