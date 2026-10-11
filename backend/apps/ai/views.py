@@ -9,6 +9,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.tenants.permissions import WorkspaceRolePermission
+from apps.tenants.activity import record_activity
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +186,7 @@ def _generate_suggestions(asset_name, asset_type, content_context):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([WorkspaceRolePermission])
 def generate_metadata(request):
     data = request.data or {}
     asset_name = (data.get("asset_name") or data.get("name") or "creative asset").strip()
@@ -210,4 +213,5 @@ def generate_metadata(request):
         "file_extension": file_extension or extension,
         "suggestions": suggestions,
     }
+    record_activity(request.user.active_tenant, request.user, f'Generated AI metadata suggestions for “{asset_name}”.', "ai")
     return Response(response, status=status.HTTP_200_OK)

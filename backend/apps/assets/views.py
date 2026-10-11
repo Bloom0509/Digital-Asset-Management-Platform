@@ -5,11 +5,13 @@ from rest_framework import status, viewsets
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.tenants.models import Membership, Tenant
+from apps.tenants.activity import record_activity
+from apps.tenants.permissions import WorkspaceRolePermission
 
 from .models import Asset
 from .serializers import AssetSerializer
@@ -44,15 +46,20 @@ class AssetViewSet(viewsets.ModelViewSet):
         return Asset.objects.none()
 
     def get_permissions(self):
-        if self.action in ('trash', 'restore', 'permanent_delete'):
-            return [IsAuthenticated()]
-        if self.request.method == 'GET':
+        if self.request.method == 'GET' and self.action == 'list' and not self.request.user.is_authenticated:
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [WorkspaceRolePermission()]
+
+    def perform_update(self, serializer):
+        previous_name = serializer.instance.name
+        asset = serializer.save()
+        if asset.name != previous_name:
+            record_activity(asset.tenant, self.request.user, f'Renamed asset “{previous_name}” to “{asset.name}”.')
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
         instance.save(update_fields=['deleted_at', 'updated_at'])
+        record_activity(instance.tenant, self.request.user, f'Moved “{instance.name}” to trash.')
 
     @action(detail=False, methods=['get'])
     def trash(self, request):
@@ -64,11 +71,13 @@ class AssetViewSet(viewsets.ModelViewSet):
         asset = self.get_object()
         asset.deleted_at = None
         asset.save(update_fields=['deleted_at', 'updated_at'])
+        record_activity(asset.tenant, request.user, f'Restored “{asset.name}” from trash.')
         return Response(self.get_serializer(asset).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['delete'], url_path='permanent-delete')
     def permanent_delete(self, request, pk=None):
         asset = self.get_object()
+        record_activity(asset.tenant, request.user, f'Permanently deleted “{asset.name}”.')
         asset.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -86,4 +95,5 @@ class AssetViewSet(viewsets.ModelViewSet):
             self.request.user.active_tenant = tenant
             self.request.user.save(update_fields=["active_tenant"])
 
-        serializer.save(tenant=tenant, uploaded_by=self.request.user)
+        asset = serializer.save(tenant=tenant, uploaded_by=self.request.user)
+        record_activity(tenant, self.request.user, f'Added asset “{asset.name}”.')

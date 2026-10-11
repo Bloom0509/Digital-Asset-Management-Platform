@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 
 const hashCode = (str) => {
@@ -259,7 +259,7 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
   )
 }
 
-function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
+function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, currentWorkspace, switchWorkspace, createWorkspace }) {
   const [assets, setAssets] = useState(emptyAssets)
   const [trashAssets, setTrashAssets] = useState(emptyAssets)
   const [collections, setCollections] = useState(emptyAssets)
@@ -271,11 +271,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [filter, setFilter] = useState('all')
   const [view, setView] = useState('grid')
   const [selected, setSelected] = useState([])
-  const [starred, setStarred] = useState([])
+  const [starredByWorkspace, setStarredByWorkspace] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('dam_favorites_by_workspace') || '{}')
+    } catch {
+      return {}
+    }
+  })
+  const starred = starredByWorkspace[currentWorkspace?.id] || []
   const [activities, setActivities] = useState([])
   const [notice, setNotice] = useState('')
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
+  const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
+  const canManageWorkspace = ['admin', 'editor'].includes(activeWorkspaceRole)
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
   const [customAssetForm, setCustomAssetForm] = useState(initialCustomAssetForm)
   const [aiSuggestions, setAiSuggestions] = useState(null)
@@ -283,10 +292,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const [selectedDrawingIdea, setSelectedDrawingIdea] = useState('')
   const [isAiLoading, setIsAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
-  const activityCounter = useRef(0)
   const fileInput = useRef(null)
   const location = useLocation()
   const navigate = useNavigate()
+  const workspacePath = (path) => `/workspaces/${currentWorkspace?.id || ''}${path === '/' ? '/assets' : path}`
 
   const requestAiSuggestions = useCallback(async (assetName, assetType) => {
     const trimmedName = (assetName || '').trim()
@@ -347,24 +356,34 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     const token = window.localStorage.getItem('dam_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
+    if (!currentWorkspace?.id) return
+
+    let cancelled = false
     apiRequest('/api/assets/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setAssets(Array.isArray(data) ? data.map(mapApiAsset) : []))
-      .catch(() => setAssets([]))
+      .then((data) => { if (!cancelled) setAssets(Array.isArray(data) ? data.map(mapApiAsset) : []) })
+      .catch(() => { if (!cancelled) setAssets([]) })
 
     apiRequest('/api/assets/trash/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setTrashAssets(Array.isArray(data) ? data.map(mapApiAsset) : []))
-      .catch(() => setTrashAssets([]))
+      .then((data) => { if (!cancelled) setTrashAssets(Array.isArray(data) ? data.map(mapApiAsset) : []) })
+      .catch(() => { if (!cancelled) setTrashAssets([]) })
 
     apiRequest('/api/collections/', { headers })
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setCollections(Array.isArray(data) ? data : []))
-      .catch(() => setCollections([]))
-  }, [apiRequest])
+      .then((data) => { if (!cancelled) setCollections(Array.isArray(data) ? data : []) })
+      .catch(() => { if (!cancelled) setCollections([]) })
+
+    apiRequest('/api/tenants/activity/')
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => { if (!cancelled) setActivities(Array.isArray(data) ? data : []) })
+      .catch(() => { if (!cancelled) setActivities([]) })
+
+    return () => { cancelled = true }
+  }, [apiRequest, currentWorkspace?.id])
 
   const openCollections = async () => {
-    navigate('/collections')
+    navigate(workspacePath('/collections'))
     try {
       const response = await apiRequest('/api/collections/')
       const data = await response.json()
@@ -434,7 +453,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   }
 
   const openTrash = async () => {
-    navigate('/trash')
+    navigate(workspacePath('/trash'))
     try {
       const response = await apiRequest('/api/assets/trash/')
       const data = await response.json()
@@ -446,9 +465,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   }
 
   const routeState = useMemo(() => {
-    const path = location.pathname || '/'
+    const path = (location.pathname || '/').replace(/^\/workspaces\/[^/]+/, '') || '/assets'
 
-    if (path === '/' || path === '') {
+    if (path === '/' || path === '/assets' || path === '') {
       return { activeSection: 'assets', activeCollectionId: null }
     }
 
@@ -464,8 +483,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       return { activeSection: 'activity', activeCollectionId: null }
     }
 
-    if (path.startsWith('/collection/')) {
-      const collectionId = path.split('/collection/')[1]?.split('/')[0]
+    if (path.startsWith('/collections/') || path.startsWith('/collection/')) {
+      const collectionId = path.replace(/^\/collections?\//, '').split('/')[0]
       return { activeSection: 'collection', activeCollectionId: collectionId || null }
     }
 
@@ -474,6 +493,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 
   const activeSection = routeState.activeSection
   const activeCollectionId = routeState.activeCollectionId
+
+  useEffect(() => {
+    window.localStorage.setItem('dam_favorites_by_workspace', JSON.stringify(starredByWorkspace))
+  }, [starredByWorkspace])
+
+  useEffect(() => {
+    if (activeSection !== 'activity' || !currentWorkspace?.id) return
+    let cancelled = false
+    apiRequest('/api/tenants/activity/')
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => { if (!cancelled) setActivities(Array.isArray(data) ? data : []) })
+      .catch(() => { if (!cancelled) setActivities([]) })
+    return () => { cancelled = true }
+  }, [activeSection, apiRequest, currentWorkspace?.id])
 
   useEffect(() => {
     if (!notice) return
@@ -520,18 +553,28 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
   const totalAssetCount = assets.length
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
 
-  const toggleStar = (name) => setStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
-  const showNotice = (message, type = 'activity') => {
-    const activity = {
-      id: `activity-${activityCounter.current}`,
-      message,
-      type,
-      timestamp: null,
-    }
-    activityCounter.current += 1
-    setActivities((current) => [activity, ...current].slice(0, 100))
+  const updateStarred = (update) => setStarredByWorkspace((current) => {
+    const workspaceId = currentWorkspace?.id
+    if (!workspaceId) return current
+    const currentNames = current[workspaceId] || []
+    const nextNames = typeof update === 'function' ? update(currentNames) : update
+    return { ...current, [workspaceId]: nextNames }
+  })
+  const toggleStar = (name) => updateStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
+  const showNotice = (message) => {
     setNotice(message)
     setMenu(null)
+  }
+
+  const handleCreateWorkspace = async () => {
+    const name = window.prompt('Name your new workspace')?.trim()
+    if (!name) return
+    try {
+      await createWorkspace(name)
+      showNotice(`Workspace “${name}” created.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to create workspace.')
+    }
   }
 
   const downloadAsset = async (asset) => {
@@ -585,7 +628,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
       setAssets((current) => current.filter((item) => item.id !== asset.id))
       setTrashAssets((current) => [{ ...asset, deleted_at: new Date().toISOString() }, ...current.filter((item) => item.id !== asset.id)])
       setSelected((current) => current.filter((item) => item !== asset.name))
-      setStarred((current) => current.filter((item) => item !== asset.name))
+      updateStarred((current) => current.filter((item) => item !== asset.name))
       showNotice(`${asset.name} moved to trash.`)
     } catch (error) {
       showNotice(error.message || 'Unable to move this asset to trash.')
@@ -623,15 +666,37 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     }
   }
 
-  const renameAsset = (asset) => {
+  const renameAsset = async (asset) => {
     const newName = window.prompt('Rename asset', asset.name)?.trim()
     if (!newName || newName === asset.name) {
       setMenu(null)
       return
     }
-    setAssets((current) => current.map((item) => item.name === asset.name ? { ...item, name: newName } : item))
+
+    try {
+      if (/^[0-9a-f-]{36}$/i.test(asset.id || '')) {
+        const response = await apiRequest(`/api/assets/${asset.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName }),
+        })
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData?.name?.[0] || errorData?.detail || 'Unable to rename this asset.')
+        }
+      }
+      setAssets((current) => current.map((item) => item.id === asset.id ? { ...item, name: newName } : item))
+      setTrashAssets((current) => current.map((item) => item.id === asset.id ? { ...item, name: newName } : item))
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).map((item) => item.id === asset.id ? { ...item, name: newName } : item),
+      })))
+    } catch (error) {
+      showNotice(error.message || 'Unable to rename this asset.')
+      return
+    }
     setSelected((current) => current.map((item) => item === asset.name ? newName : item))
-    setStarred((current) => current.map((item) => item === asset.name ? newName : item))
+    updateStarred((current) => current.map((item) => item === asset.name ? newName : item))
     if (previewAsset?.name === asset.name) setPreviewAsset({ ...previewAsset, name: newName })
     showNotice(`${asset.name} renamed to ${newName}.`)
   }
@@ -731,13 +796,23 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
     <div className={`shell theme-${theme}`} onClick={() => menu && setMenu(null)}>
       <aside className="sidebar">
         <div className="wordmark">Digital Asset</div>
+        <div className="workspace-switcher">
+          <label htmlFor="workspace-switcher">Workspace</label>
+          <select id="workspace-switcher" value={currentWorkspace?.id || ''} onChange={(event) => switchWorkspace(event.target.value)}>
+            {(workspaces.length ? workspaces : [{ id: currentWorkspace?.id || '', name: currentWorkspace?.name || 'Current workspace', role: activeWorkspaceRole }]).map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+            ))}
+          </select>
+          <small>{activeWorkspaceRole}</small>
+          <button className="workspace-create" type="button" onClick={handleCreateWorkspace}>+ New workspace</button>
+        </div>
         <nav>
           <p className="nav-label">Workspace</p>
-          <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => navigate('/')}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
+          <button className={activeSection === 'assets' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/assets'))}><span>▦</span> All assets <b>{totalAssetCount}</b></button>
           <button className={activeSection === 'collections' || activeSection === 'collection' ? 'active' : ''} type="button" onClick={openCollections}><span>□</span> Collections <b>{collections.length}</b></button>
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
-          <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => navigate('/activity')}><span>◷</span> Activity <b>{activities.length}</b></button>
+          <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/activity'))}><span>◷</span> Activity <b>{activities.length}</b></button>
           <div className="favorites-panel">
             <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
             {favoriteAssets.length ? favoriteAssets.map((asset) => (
@@ -761,8 +836,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
             </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
-            {activeSection === 'collections' && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
-            {activeSection !== 'collections' && activeSection !== 'collection' && <>
+            {activeSection === 'collections' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
+            {activeSection !== 'collections' && activeSection !== 'collection' && canManageWorkspace && <>
               <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
               <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
             </>}
@@ -811,7 +886,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                     <span className={`activity-icon ${activity.type}`}>{activity.type === 'error' ? '!' : '◷'}</span>
                     <div>
                       <p>{activity.message}</p>
-                      <time>Just now</time>
+                      <time>{activity.timestamp ? new Date(activity.timestamp).toLocaleString() : 'Just now'}</time>
                     </div>
                   </article>
                 ))}
@@ -825,7 +900,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                 {collections.map((collection) => {
                   const { imageAssets, imageCount, remainingCount } = getCollectionThumbnails(collection)
                   return (
-                    <button className="collection-card" type="button" key={collection.id} onClick={() => navigate(`/collection/${collection.id}`)}>
+                    <button className="collection-card" type="button" key={collection.id} onClick={() => navigate(workspacePath(`/collections/${collection.id}`))}>
                       <span className="collection-thumbnails" aria-label={`${imageCount} collection images`}>
                         {imageAssets.length ? imageAssets.map((asset) => (
                           <span className="collection-thumbnail" key={asset.id}>
@@ -865,17 +940,17 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
                     {menu === asset.name && (
                       <div className="menu">
                         <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); setPreviewAsset(asset) }}>Open preview</button>
-                        <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); downloadAsset(asset) }}>Download</button>
+                        {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>}
                         {activeSection === 'trash' ? (
-                          <>
+                          canManageWorkspace && <>
                             <button type="button" onClick={(event) => { event.stopPropagation(); restoreAsset(asset) }}>Restore</button>
-                            <button type="button" onClick={(event) => { event.stopPropagation(); permanentlyDeleteAsset(asset) }}>Delete permanently</button>
+                            {activeWorkspaceRole === 'admin' && <button type="button" onClick={(event) => { event.stopPropagation(); permanentlyDeleteAsset(asset) }}>Delete permanently</button>}
                           </>
                         ) : activeSection === 'collection' ? (
-                          <button type="button" onClick={(event) => { event.stopPropagation(); removeAssetFromCollection(asset) }}>Remove from collection</button>
+                          canManageWorkspace && <button type="button" onClick={(event) => { event.stopPropagation(); removeAssetFromCollection(asset) }}>Remove from collection</button>
                         ) : (
-                          <>
+                          canManageWorkspace && <>
                             <button type="button" onClick={(event) => { event.stopPropagation(); setAssetToCollect(asset); setMenu(null) }}>Add to collection</button>
                             <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset) }}>Move to trash</button>
                           </>
@@ -1059,7 +1134,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest }) {
 }
 
 function App() {
-  const [authMode, setAuthMode] = useState(() => window.location.pathname === '/signup' ? 'signup' : 'login')
+  const location = useLocation()
+  const navigate = useNavigate()
+  const requestedWorkspaceId = location.pathname.match(/^\/workspaces\/([^/]+)/)?.[1]
+  const authMode = location.pathname === '/signup' ? 'signup' : 'login'
   const [authForm, setAuthForm] = useState(initialAuthForm)
   const [authMessage, setAuthMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -1068,18 +1146,21 @@ function App() {
     return savedTheme || 'light'
   })
   const [token, setToken] = useState(() => window.localStorage.getItem('dam_token'))
+  const [workspaces, setWorkspaces] = useState([])
+  const [currentWorkspace, setCurrentWorkspace] = useState(null)
   const [authStatus, setAuthStatus] = useState(() => window.localStorage.getItem('dam_token') ? 'checking' : 'unauthenticated')
 
   const navigateToAuthMode = useCallback((mode, replace = false) => {
     const path = mode === 'signup' ? '/signup' : '/login'
-    window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
-    setAuthMode(mode)
-  }, [])
+    navigate(path, { replace })
+  }, [navigate])
 
   const clearAuthSession = useCallback(() => {
     window.localStorage.removeItem('dam_token')
     window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
+    setWorkspaces([])
+    setCurrentWorkspace(null)
     setAuthStatus('unauthenticated')
     navigateToAuthMode('login', true)
     setAuthMessage('Your session expired. Please log in again.')
@@ -1131,7 +1212,7 @@ function App() {
       headers,
     })
 
-    if ((response.status === 401 || response.status === 403) && retry) {
+    if (response.status === 401 && retry) {
       const refreshedToken = await refreshAccessToken()
       if (refreshedToken) {
         return fetch(url, {
@@ -1147,28 +1228,53 @@ function App() {
     return response
   }, [refreshAccessToken])
 
+  const switchWorkspace = useCallback(async (workspaceId) => {
+    if (!workspaceId) return
+
+    try {
+      const response = await apiRequest('/api/tenants/switch/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Unable to switch workspace.')
+      }
+
+      const nextWorkspace = await response.json()
+      setCurrentWorkspace(nextWorkspace)
+      setWorkspaces((current) => current.map((workspace) => workspace.id === nextWorkspace.id ? nextWorkspace : workspace))
+      const currentSuffix = location.pathname.match(/^\/workspaces\/[^/]+(\/.*)?$/)?.[1] || '/assets'
+      navigate(`/workspaces/${workspaceId}${currentSuffix}`, { replace: false })
+    } catch (error) {
+      setAuthMessage(error.message || 'Unable to switch workspace.')
+    }
+  }, [apiRequest, location.pathname, navigate])
+
+  const createWorkspace = useCallback(async (name) => {
+    const slugBase = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'workspace'
+    const response = await apiRequest('/api/tenants/create/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, slug: `${slugBase}-${crypto.randomUUID().slice(0, 8)}` }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const detail = data?.slug?.[0] || data?.name?.[0] || data?.detail || 'Unable to create workspace.'
+      throw new Error(detail)
+    }
+    const workspace = { ...data, role: 'admin' }
+    setWorkspaces((current) => [...current.filter((item) => item.id !== workspace.id), workspace])
+    setCurrentWorkspace(workspace)
+    navigate(`/workspaces/${workspace.id}/assets`)
+    return workspace
+  }, [apiRequest, navigate])
+
   useEffect(() => {
     window.localStorage.setItem('dam_theme', theme)
   }, [theme])
-
-  useEffect(() => {
-    const syncAuthRoute = () => {
-      const path = window.location.pathname
-      if (!token && path !== '/login' && path !== '/signup') {
-        navigateToAuthMode('login', true)
-        return
-      }
-      if (token && (path === '/login' || path === '/signup')) {
-        window.history.replaceState({}, '', '/')
-        return
-      }
-      if (!token) setAuthMode(path === '/signup' ? 'signup' : 'login')
-    }
-
-    syncAuthRoute()
-    window.addEventListener('popstate', syncAuthRoute)
-    return () => window.removeEventListener('popstate', syncAuthRoute)
-  }, [token, navigateToAuthMode])
 
   const handleLogin = async (event) => {
     event.preventDefault()
@@ -1201,7 +1307,6 @@ function App() {
       }
       setToken(data.access)
       setAuthStatus('checking')
-      window.history.replaceState({}, '', '/')
       setAuthForm(initialAuthForm)
     } catch (error) {
       setAuthMessage(error.message)
@@ -1251,6 +1356,8 @@ function App() {
     window.localStorage.removeItem('dam_token')
     window.localStorage.removeItem('dam_refresh_token')
     setToken(null)
+    setWorkspaces([])
+    setCurrentWorkspace(null)
     setAuthStatus('unauthenticated')
     navigateToAuthMode('login', true)
     setAuthMessage('You have been signed out.')
@@ -1260,26 +1367,64 @@ function App() {
     if (!token) return
 
     // Session validation may refresh tokens and clear invalid auth state.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    apiRequest('/api/accounts/me/', { headers: { Authorization: `Bearer ${token}` } })
-      .then((response) => {
-        if (response.status === 401 || response.status === 403) {
-          clearAuthSession()
+    let cancelled = false
+    const loadWorkspaceSession = async () => {
+      try {
+        const userResponse = await apiRequest('/api/accounts/me/', { headers: { Authorization: `Bearer ${token}` } })
+        if (userResponse.status === 401 || userResponse.status === 403) {
+          if (!cancelled) clearAuthSession()
           return
         }
-        if (!response.ok) throw new Error('Unable to validate session.')
-        setAuthStatus('authenticated')
-      })
-      .catch(() => {
-        clearAuthSession()
-      })
-  }, [token, apiRequest, clearAuthSession])
+        if (!userResponse.ok) throw new Error('Unable to validate session.')
 
-  if (token && authStatus === 'checking') {
-    return <div className={`session-checking theme-${theme}`} role="status">Checking your session…</div>
+        const workspacesResponse = await apiRequest('/api/tenants/')
+        if (!workspacesResponse.ok) throw new Error('Unable to load workspaces.')
+        const workspaceData = await workspacesResponse.json()
+        if (!Array.isArray(workspaceData)) throw new Error('Invalid workspace response.')
+        if (cancelled) return
+
+        const requestedWorkspace = workspaceData.find((workspace) => workspace.id === requestedWorkspaceId)
+        const nextWorkspace = requestedWorkspace || workspaceData[0] || null
+        if (!nextWorkspace) throw new Error('No workspace is available for this account.')
+
+        if (!requestedWorkspace || !requestedWorkspaceId) {
+          navigate(`/workspaces/${nextWorkspace.id}/assets`, { replace: true })
+        }
+
+        const switchResponse = await apiRequest('/api/tenants/switch/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace_id: nextWorkspace.id }),
+        })
+        if (!switchResponse.ok) throw new Error('Unable to activate the requested workspace.')
+        const activatedWorkspace = await switchResponse.json()
+        const workspaceIndex = workspaceData.findIndex((workspace) => workspace.id === activatedWorkspace.id)
+        if (workspaceIndex >= 0) workspaceData[workspaceIndex] = activatedWorkspace
+
+        if (cancelled) return
+        setWorkspaces(workspaceData)
+        setCurrentWorkspace(activatedWorkspace)
+        setAuthStatus('authenticated')
+      } catch (error) {
+        if (!cancelled) {
+          setAuthMessage(error.message || 'Unable to load your workspace.')
+          clearAuthSession()
+        }
+      }
+    }
+
+    loadWorkspaceSession()
+    return () => { cancelled = true }
+  }, [token, apiRequest, clearAuthSession, requestedWorkspaceId, navigate])
+
+  if (token && (authStatus === 'checking' || (requestedWorkspaceId && currentWorkspace?.id !== requestedWorkspaceId))) {
+    return <div className={`session-checking theme-${theme}`} role="status">{authStatus === 'checking' ? 'Checking your session…' : 'Switching workspace…'}</div>
   }
 
   if (!token || authStatus !== 'authenticated') {
+    if (!token && location.pathname !== '/login' && location.pathname !== '/signup') {
+      return <Navigate to="/login" replace />
+    }
     return (
       <AuthView
         authMode={authMode}
@@ -1296,7 +1441,7 @@ function App() {
     )
   }
 
-  return <DashboardApp onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} apiRequest={apiRequest} />
+  return <DashboardApp key={currentWorkspace.id} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} apiRequest={apiRequest} workspaces={workspaces} currentWorkspace={currentWorkspace} switchWorkspace={switchWorkspace} createWorkspace={createWorkspace} />
 }
 
 export default App

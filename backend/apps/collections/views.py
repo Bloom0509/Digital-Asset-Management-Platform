@@ -7,7 +7,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.assets.models import Asset
+from apps.tenants.activity import record_activity
 from apps.tenants.models import Membership, Tenant
+from apps.tenants.permissions import WorkspaceRolePermission
 
 from .models import Collection
 from .serializers import (
@@ -19,7 +21,7 @@ from .serializers import (
 
 class CollectionViewSet(viewsets.ModelViewSet):
     serializer_class = CollectionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [WorkspaceRolePermission]
 
     def get_queryset(self):
         tenant_id = self.request.user.active_tenant_id
@@ -42,7 +44,18 @@ class CollectionViewSet(viewsets.ModelViewSet):
             )
             self.request.user.active_tenant = tenant
             self.request.user.save(update_fields=["active_tenant"])
-        serializer.save(tenant=tenant)
+        collection = serializer.save(tenant=tenant)
+        record_activity(tenant, self.request.user, f'Created collection “{collection.name}”.')
+
+    def perform_update(self, serializer):
+        previous_name = serializer.instance.name
+        collection = serializer.save()
+        if collection.name != previous_name:
+            record_activity(collection.tenant, self.request.user, f'Renamed collection “{previous_name}” to “{collection.name}”.')
+
+    def perform_destroy(self, instance):
+        record_activity(instance.tenant, self.request.user, f'Deleted collection “{instance.name}”.')
+        instance.delete()
 
     @action(detail=True, methods=["post"], url_path="assets")
     def add_assets(self, request, pk=None):
@@ -58,6 +71,7 @@ class CollectionViewSet(viewsets.ModelViewSet):
         if assets.count() != len(set(asset_ids)):
             raise ValidationError({"asset_ids": "One or more assets are unavailable in your workspace."})
         collection.assets.add(*assets)
+        record_activity(collection.tenant, request.user, f'Added {len(assets)} asset(s) to “{collection.name}”.')
         return Response(self.get_serializer(collection).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["delete"], url_path="remove-asset")
@@ -69,4 +83,5 @@ class CollectionViewSet(viewsets.ModelViewSet):
         )
         input_serializer.is_valid(raise_exception=True)
         collection.assets.remove(input_serializer.validated_data["asset_id"])
+        record_activity(collection.tenant, request.user, f'Removed an asset from “{collection.name}”.')
         return Response(self.get_serializer(collection).data, status=status.HTTP_200_OK)
