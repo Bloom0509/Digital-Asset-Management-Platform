@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.urls import reverse
 
 from apps.assets.models import Asset
 
@@ -24,6 +25,8 @@ class CollectionSerializer(serializers.ModelSerializer):
                 "metadata": asset.metadata,
                 "created_at": asset.created_at,
                 "updated_at": asset.updated_at,
+                "file_url": reverse("asset-file", kwargs={"pk": asset.pk}) if asset.file else None,
+                "thumbnail_url": f"{reverse('asset-file', kwargs={'pk': asset.pk})}?thumbnail=1" if asset.file and asset.content_type.startswith("image/") else None,
             }
             for asset in assets
         ]

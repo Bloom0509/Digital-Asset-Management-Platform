@@ -30,6 +30,8 @@ const mapApiAsset = (asset, index = 0) => ({
   color: ['coral', 'blue', 'green', 'yellow'][index % 4],
   updated: asset.updated_at ? new Date(asset.updated_at).toLocaleDateString() : 'Recently',
   image: asset.metadata?.doodle_image_data_url || getPlaceholderImage(asset.name),
+  file_url: asset.file_url || null,
+  thumbnail_url: asset.thumbnail_url || null,
 })
 
 const initialAuthForm = {
@@ -281,8 +283,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const starred = starredByWorkspace[currentWorkspace?.id] || []
   const [activities, setActivities] = useState([])
   const [notice, setNotice] = useState('')
+  const [uploadItems, setUploadItems] = useState([])
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
+  const previewObjectUrl = useRef(null)
+  const previewRequest = useRef(0)
   const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
   const canManageWorkspace = ['admin', 'editor'].includes(activeWorkspaceRole)
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
@@ -296,6 +301,40 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const location = useLocation()
   const navigate = useNavigate()
   const workspacePath = (path) => `/workspaces/${currentWorkspace?.id || ''}${path === '/' ? '/assets' : path}`
+
+  const closeAssetPreview = useCallback(() => {
+    previewRequest.current += 1
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current)
+    previewObjectUrl.current = null
+    setPreviewAsset(null)
+  }, [])
+
+  const openAssetPreview = useCallback(async (asset) => {
+    const requestId = previewRequest.current + 1
+    previewRequest.current = requestId
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current)
+    previewObjectUrl.current = null
+    setPreviewAsset({ ...asset, previewLoading: Boolean(asset.file_url) })
+    if (!asset.file_url) return
+
+    try {
+      const response = await apiRequest(asset.file_url)
+      if (!response.ok) throw new Error('Unable to load this file preview.')
+      const blobUrl = URL.createObjectURL(await response.blob())
+      if (previewRequest.current !== requestId) {
+        URL.revokeObjectURL(blobUrl)
+        return
+      }
+      previewObjectUrl.current = blobUrl
+      setPreviewAsset((current) => current?.id === asset.id ? { ...current, image: blobUrl, previewLoading: false } : current)
+    } catch (error) {
+      if (previewRequest.current === requestId) {
+        setPreviewAsset((current) => current?.id === asset.id ? { ...current, previewLoading: false } : current)
+        setNotice(error.message || 'Unable to load this file preview.')
+        setMenu(null)
+      }
+    }
+  }, [apiRequest])
 
   const requestAiSuggestions = useCallback(async (assetName, assetType) => {
     const trimmedName = (assetName || '').trim()
@@ -339,7 +378,6 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   useEffect(() => {
     const trimmedName = customAssetForm.name.trim()
     if (!trimmedName) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAiSuggestions(null)
       setAiError('')
       return
@@ -381,6 +419,48 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     return () => { cancelled = true }
   }, [apiRequest, currentWorkspace?.id])
+
+  const protectedFileUrls = [...assets, ...trashAssets, ...collections.flatMap((collection) => collection.assets || [])]
+    .map((asset) => asset.thumbnail_url)
+    .filter(Boolean)
+    .filter((url, index, urls) => urls.indexOf(url) === index)
+    .sort()
+  const protectedFileKey = protectedFileUrls.join('\n')
+
+  useEffect(() => {
+    if (!protectedFileKey) return undefined
+    let cancelled = false
+    const objectUrls = []
+
+    Promise.all(protectedFileKey.split('\n').map(async (url) => {
+      try {
+        const response = await apiRequest(url)
+        if (!response.ok) return null
+        const blobUrl = URL.createObjectURL(await response.blob())
+        objectUrls.push(blobUrl)
+        return [url, blobUrl]
+      } catch {
+        return null
+      }
+    })).then((entries) => {
+      if (cancelled) return
+      const previews = new Map(entries.filter(Boolean))
+      const attachPreview = (asset) => previews.has(asset.thumbnail_url)
+        ? { ...asset, image: previews.get(asset.thumbnail_url) }
+        : asset
+      setAssets((current) => current.map(attachPreview))
+      setTrashAssets((current) => current.map(attachPreview))
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).map(attachPreview),
+      })))
+    })
+
+    return () => {
+      cancelled = true
+      objectUrls.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [apiRequest, currentWorkspace?.id, protectedFileKey])
 
   const openCollections = async () => {
     navigate(workspacePath('/collections'))
@@ -516,11 +596,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') setPreviewAsset(null)
+      if (event.key === 'Escape') closeAssetPreview()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [closeAssetPreview])
 
   const activeCollection = collections.find((collection) => collection.id === activeCollectionId)
   const collectionAssets = (activeCollection?.assets || []).map((asset, index) => {
@@ -578,18 +658,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   }
 
   const downloadAsset = async (asset) => {
-    const sourceUrl = asset?.download_url || asset?.image || asset?.url
+    const sourceUrl = asset?.download_url || asset?.file_url || asset?.image || asset?.url
     if (!sourceUrl) {
       showNotice(`No downloadable file found for ${asset?.name || 'this asset'}.`)
       return
     }
 
     try {
-      const response = await fetch(sourceUrl, {
-        headers: {
-          ...(window.localStorage.getItem('dam_token') ? { Authorization: `Bearer ${window.localStorage.getItem('dam_token')}` } : {}),
-        },
-      })
+      const response = await apiRequest(sourceUrl)
 
       if (!response.ok) {
         throw new Error('Unable to download this asset.')
@@ -701,32 +777,57 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     showNotice(`${asset.name} renamed to ${newName}.`)
   }
 
-  const handleFiles = (event) => {
+  const handleFiles = async (event) => {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
+    event.target.value = ''
+    const queue = files.map((file) => ({ id: crypto.randomUUID(), file, name: file.name }))
+    setUploadItems((current) => [...queue.map(({ id, name }) => ({ id, name, progress: 0, status: 'queued' })), ...current])
 
-    const added = files.map((file, index) => {
-      const fileType = file.name.split('.').pop()?.toUpperCase() ?? 'FILE'
-      const isImage = ['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG'].includes(fileType)
-      const isVideo = ['MP4', 'MOV', 'WEBM', 'AVI', 'MKV'].includes(fileType)
-      let image = getPlaceholderImage(file.name)
-      if (isImage || isVideo) image = URL.createObjectURL(file)
+    const uploadOne = ({ id, file }) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      const formData = new FormData()
+      formData.append('file', file)
+      xhr.open('POST', '/api/assets/upload/')
+      const token = window.localStorage.getItem('dam_token')
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
-      return {
-        id: `${Date.now()}-${index}-${file.name}`,
-        name: file.name,
-        type: fileType,
-        kind: isImage ? 'image' : isVideo ? 'video' : 'file',
-        size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-        color: ['coral', 'blue', 'green', 'yellow'][index % 4],
-        updated: 'Just now',
-        image,
-      }
+      xhr.upload.addEventListener('progress', (progressEvent) => {
+        const progress = progressEvent.lengthComputable
+          ? Math.round((progressEvent.loaded / progressEvent.total) * 100)
+          : null
+        setUploadItems((current) => current.map((item) => item.id === id ? { ...item, progress, status: 'uploading' } : item))
+      })
+      xhr.addEventListener('load', () => {
+        let data = {}
+        try { data = JSON.parse(xhr.responseText) } catch { /* The server returned no JSON body. */ }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(data?.file?.[0] || data?.detail || 'Upload failed.'))
+          return
+        }
+        resolve(data)
+      })
+      xhr.addEventListener('error', () => reject(new Error('Network error while uploading the file.')))
+      xhr.addEventListener('abort', () => reject(new Error('Upload was cancelled.')))
+      xhr.send(formData)
     })
 
-    setAssets((current) => [...added, ...current])
-    showNotice(`${files.length} asset${files.length > 1 ? 's' : ''} added to this demo library.`)
-    event.target.value = ''
+    const results = await Promise.all(queue.map(async (item) => {
+      try {
+        const data = await uploadOne(item)
+        const asset = mapApiAsset(data)
+        setAssets((current) => [asset, ...current.filter((existing) => existing.id !== asset.id)])
+        setUploadItems((current) => current.map((upload) => upload.id === item.id ? { ...upload, progress: 100, status: 'complete' } : upload))
+        return { ok: true, name: item.name }
+      } catch (error) {
+        setUploadItems((current) => current.map((upload) => upload.id === item.id ? { ...upload, status: 'error', error: error.message } : upload))
+        return { ok: false, name: item.name, error: error.message }
+      }
+    }))
+
+    const completed = results.filter((result) => result.ok).length
+    const failures = results.length - completed
+    showNotice(failures ? `${completed} uploaded, ${failures} failed.` : `${completed} file${completed === 1 ? '' : 's'} uploaded.`)
   }
 
   const handleCreateCustomAsset = async () => {
@@ -816,7 +917,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           <div className="favorites-panel">
             <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
             {favoriteAssets.length ? favoriteAssets.map((asset) => (
-              <div className="favorite-item" key={asset.name} onClick={() => setPreviewAsset(asset)}>
+              <div className="favorite-item" key={asset.name} onClick={() => openAssetPreview(asset)}>
                 <img src={asset.image} alt="" />
                 <span>{asset.name}</span>
                 <button className="favorite-remove" type="button" onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Remove ${asset.name} from favorites`}>★</button>
@@ -835,7 +936,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
-            <input ref={fileInput} type="file" multiple hidden onChange={handleFiles} />
+            <input ref={fileInput} type="file" multiple hidden accept=".jpg,.jpeg,.png,.gif,.webp,.avif,.mp4,.webm,.mov,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={handleFiles} />
             {activeSection === 'collections' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
             {activeSection !== 'collections' && activeSection !== 'collection' && canManageWorkspace && <>
               <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
@@ -843,6 +944,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             </>}
           </div>
         </header>
+
+        {uploadItems.length > 0 && <div className="upload-queue" aria-live="polite">
+          <div className="upload-queue-heading">
+            <strong>Uploads</strong>
+            <button type="button" onClick={() => setUploadItems((current) => current.filter((item) => item.status === 'queued' || item.status === 'uploading'))}>Clear finished</button>
+          </div>
+          {uploadItems.slice(0, 5).map((item) => (
+            <div className="upload-queue-item" key={item.id}>
+              <div className="upload-queue-copy"><span title={item.name}>{item.name}</span><small>{item.status === 'error' ? item.error : item.progress == null ? item.status : `${item.status} · ${item.progress}%`}</small></div>
+              <progress max="100" value={item.progress ?? 0} aria-label={`${item.name} upload progress`} />
+            </div>
+          ))}
+          {uploadItems.length > 5 && <small className="upload-queue-more">and {uploadItems.length - 5} more…</small>}
+        </div>}
 
         <section className="content" id="assets">
           <div className="title-row">
@@ -926,12 +1041,15 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
                   key={asset.id ?? `${asset.name}-${asset.updated}-${index}`}
                   onClick={(event) => {
                     if (event.target.closest('button')) return
-                    setPreviewAsset(asset)
+                    openAssetPreview(asset)
                   }}
                 >
-                  <div className={`asset-preview ${asset.color}`} onClick={(event) => { event.stopPropagation(); setPreviewAsset(asset) }} style={{ cursor: 'pointer' }}>
+                  <div className={`asset-preview ${asset.color}`} onClick={(event) => { event.stopPropagation(); openAssetPreview(asset) }} style={{ cursor: 'pointer' }}>
                     {asset.kind === 'video' ? (
-                      <video src={asset.image} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', background: '#000' }} />
+                      <button className="video-thumbnail" type="button" onClick={(event) => { event.stopPropagation(); openAssetPreview(asset) }} aria-label={`Preview video ${asset.name}`}>
+                        <img src={asset.image} alt="" />
+                        <span aria-hidden="true">▶</span>
+                      </button>
                     ) : (
                       asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     )}
@@ -939,7 +1057,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
                     <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>
                     {menu === asset.name && (
                       <div className="menu">
-                        <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); setPreviewAsset(asset) }}>Open preview</button>
+                        <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); openAssetPreview(asset) }}>Open preview</button>
                         <button type="button" onClick={(event) => { event.stopPropagation(); downloadAsset(asset) }}>Download</button>
                         {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>}
                         {activeSection === 'trash' ? (
@@ -977,7 +1095,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         </section>
       </main>
 
-      {notice && <div className="toast">{notice}</div>}
+      {notice && <div className="toast" role="status" aria-live="polite">
+        <span>{notice}</span>
+        <button className="toast-dismiss" type="button" onClick={() => setNotice('')} aria-label="Dismiss notification" title="Dismiss notification">Dismiss ×</button>
+      </div>}
       {isCreateCollectionOpen && (
         <div className="modal-backdrop" onClick={() => setIsCreateCollectionOpen(false)}>
           <form className="asset-modal collection-modal" onSubmit={createCollection} onClick={(event) => event.stopPropagation()}>
@@ -1114,10 +1235,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         </div>
       )}
       {previewAsset && (
-        <div className="modal-backdrop" onClick={() => setPreviewAsset(null)}>
+        <div className="modal-backdrop" onClick={closeAssetPreview}>
           <div className="asset-modal" onClick={(event) => event.stopPropagation()}>
-            <button className="modal-close" type="button" onClick={() => setPreviewAsset(null)}>×</button>
-            {previewAsset.kind === 'video' ? (
+            <button className="modal-close" type="button" onClick={closeAssetPreview}>×</button>
+            {previewAsset.previewLoading ? (
+              <div className="asset-preview-loading" role="status">Loading original file…</div>
+            ) : previewAsset.kind === 'video' ? (
               <video src={previewAsset.image} controls playsInline className="asset-modal-image" />
             ) : (
               <img src={previewAsset.image} alt={previewAsset.name} className="asset-modal-image" />

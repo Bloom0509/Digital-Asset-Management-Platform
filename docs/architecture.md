@@ -17,6 +17,10 @@ Workspace roles are `admin`, `editor`, and `viewer`. All members may read worksp
 - `search`: keyword, filtered, paginated, and semantic search
 - `ai`: analysis, tagging, descriptions, embeddings, RAG, and agents
 
+## Asset file storage
+
+`POST /api/assets/upload/` accepts authenticated multipart uploads with a `file` field. Files are stored under `DAM_MEDIA_ROOT` (default: `backend/media/`) in generated tenant-specific paths; the database keeps the generated storage key and file metadata. The default maximum size is 50 MiB and can be changed with `DAM_MAX_UPLOAD_SIZE` (bytes). Supported extensions are validated by the API. Do not serve `MEDIA_ROOT` directly: previews and downloads go through `GET /api/assets/:id/file/`, which enforces active-workspace membership and sets safe content headers. Permanent deletion removes the stored file; moving an asset to Trash retains it for restoration.
+
 ## Activity
 
 Asset lifecycle changes, collection changes, workspace creation, and successful AI metadata generation are recorded as tenant-owned activity events. The activity API is `/api/tenants/activity/`; it is membership-protected and returns the most recent 100 events for the active tenant.

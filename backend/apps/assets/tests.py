@@ -1,13 +1,113 @@
 import json
+import tempfile
 import uuid
+from pathlib import Path
+from io import BytesIO
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
+from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 
 class AssetAccessTests(TestCase):
+    def test_multipart_upload_is_stored_and_served_only_to_workspace_members(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                user = get_user_model().objects.create_user(
+                    username=f"upload-user-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                owner_client = APIClient()
+                owner_client.force_authenticate(user=user)
+                file_content = b"private image bytes"
+                upload_response = owner_client.post(
+                    "/api/assets/upload/",
+                    {"file": SimpleUploadedFile("campaign.png", file_content, content_type="image/png")},
+                    format="multipart",
+                )
+
+                self.assertEqual(upload_response.status_code, 201, upload_response.content)
+                asset_data = upload_response.json()
+                self.assertEqual(asset_data["name"], "campaign.png")
+                self.assertEqual(asset_data["size_bytes"], len(file_content))
+                self.assertEqual(asset_data["content_type"], "image/png")
+
+                asset = owner_client.get(f"/api/assets/{asset_data['id']}/").json()
+                stored_path = Path(media_root, asset["object_key"])
+                self.assertTrue(stored_path.is_file())
+                self.assertTrue(asset["object_key"].startswith(f"tenants/{user.active_tenant_id}/"))
+
+                file_response = owner_client.get(asset_data["file_url"])
+                self.assertEqual(file_response.status_code, 200)
+                self.assertEqual(b"".join(file_response.streaming_content), file_content)
+                self.assertEqual(file_response["X-Content-Type-Options"], "nosniff")
+                self.assertIn("inline", file_response["Content-Disposition"])
+
+                outsider = get_user_model().objects.create_user(
+                    username=f"upload-outsider-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                outsider_client = APIClient()
+                outsider_client.force_authenticate(user=outsider)
+                self.assertEqual(outsider_client.get(asset_data["file_url"]).status_code, 404)
+
+    @override_settings(DAM_MAX_UPLOAD_SIZE=3)
+    def test_upload_rejects_files_over_configured_size_limit(self):
+        user = get_user_model().objects.create_user(
+            username=f"large-upload-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        response = client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("too-large.txt", b"four", content_type="text/plain")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("1 MiB", response.json()["file"][0])
+
+    def test_upload_rejects_unsupported_extensions(self):
+        user = get_user_model().objects.create_user(
+            username=f"invalid-upload-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        response = client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("malware.exe", b"not executable", content_type="application/octet-stream")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not supported", response.json()["file"][0])
+
+    def test_image_thumbnail_is_generated_at_a_bounded_size(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                user = get_user_model().objects.create_user(
+                    username=f"thumbnail-user-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                client = APIClient()
+                client.force_authenticate(user=user)
+                original = BytesIO()
+                Image.new("RGB", (1280, 960), color="navy").save(original, format="PNG")
+                original.seek(0)
+
+                upload_response = client.post(
+                    "/api/assets/upload/",
+                    {"file": SimpleUploadedFile("thumbnail.png", original.read(), content_type="image/png")},
+                    format="multipart",
+                )
+                self.assertEqual(upload_response.status_code, 201, upload_response.content)
+                thumbnail_response = client.get(upload_response.json()["thumbnail_url"])
+                self.assertEqual(thumbnail_response.status_code, 200)
+                self.assertEqual(thumbnail_response["Content-Type"], "image/jpeg")
+                with Image.open(BytesIO(thumbnail_response.content)) as thumbnail:
+                    self.assertLessEqual(thumbnail.width, 640)
+                    self.assertLessEqual(thumbnail.height, 480)
+
     def test_get_assets_allows_anonymous_access_even_with_invalid_bearer_token(self):
         response = self.client.get(
             "/api/assets/",

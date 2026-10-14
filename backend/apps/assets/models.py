@@ -1,7 +1,13 @@
 import uuid
+from pathlib import Path
 
 from django.conf import settings
 from django.db import models
+
+
+def asset_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()[:12]
+    return f"tenants/{instance.tenant_id}/{instance.pk}/{uuid.uuid4().hex}{extension}"
 
 
 class Asset(models.Model):
@@ -10,6 +16,7 @@ class Asset(models.Model):
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="uploaded_assets")
     name = models.CharField(max_length=255)
     object_key = models.CharField(max_length=500, unique=True)
+    file = models.FileField(upload_to=asset_upload_path, blank=True, null=True)
     content_type = models.CharField(max_length=150)
     size_bytes = models.PositiveBigIntegerField(default=0)
     metadata = models.JSONField(default=dict, blank=True)
