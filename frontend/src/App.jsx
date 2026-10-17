@@ -412,11 +412,6 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       .then((data) => { if (!cancelled) setCollections(Array.isArray(data) ? data : []) })
       .catch(() => { if (!cancelled) setCollections([]) })
 
-    apiRequest('/api/tenants/activity/')
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => { if (!cancelled) setActivities(Array.isArray(data) ? data : []) })
-      .catch(() => { if (!cancelled) setActivities([]) })
-
     return () => { cancelled = true }
   }, [apiRequest, currentWorkspace?.id])
 
@@ -579,14 +574,43 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   }, [starredByWorkspace])
 
   useEffect(() => {
-    if (activeSection !== 'activity' || !currentWorkspace?.id) return
+    if (!currentWorkspace?.id) return undefined
     let cancelled = false
-    apiRequest('/api/tenants/activity/')
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => { if (!cancelled) setActivities(Array.isArray(data) ? data : []) })
-      .catch(() => { if (!cancelled) setActivities([]) })
-    return () => { cancelled = true }
-  }, [activeSection, apiRequest, currentWorkspace?.id])
+    let knownActivityIds = null
+    let timer
+
+    const refreshActivity = async () => {
+      try {
+        const response = await apiRequest('/api/tenants/activity/')
+        if (!response.ok) return
+        const data = await response.json()
+        if (cancelled || !Array.isArray(data)) return
+
+        if (knownActivityIds) {
+          const newActivities = data.filter((activity) => !knownActivityIds.has(activity.id))
+          if (newActivities.length) {
+            const latestActivity = newActivities[0]
+            const prefix = newActivities.length > 1 ? `${newActivities.length} new activities: ` : 'New activity: '
+            setNotice(`${prefix}${latestActivity.message}`)
+            setMenu(null)
+          }
+        }
+
+        knownActivityIds = new Set(data.map((activity) => activity.id))
+        setActivities(data)
+      } catch {
+        // Keep the last activity list and retry on the next polling cycle.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refreshActivity, 15000)
+      }
+    }
+
+    refreshActivity()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [apiRequest, currentWorkspace?.id])
 
   useEffect(() => {
     if (!notice) return
