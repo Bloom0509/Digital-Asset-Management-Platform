@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { ActivityFeed, AssetGrid, AssetPreviewModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import './App.css'
 
 const hashCode = (str) => {
@@ -21,6 +22,7 @@ const getPlaceholderImage = (name) => {
 }
 
 const emptyAssets = []
+const activityRetentionMs = 15 * 60 * 1000
 
 const mapApiAsset = (asset, index = 0) => ({
   ...asset,
@@ -597,7 +599,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         }
 
         knownActivityIds = new Set(data.map((activity) => activity.id))
-        setActivities(data)
+        const cutoff = Date.now() - activityRetentionMs
+        setActivities(data.filter((activity) => {
+          const createdAt = Date.parse(activity.timestamp)
+          return Number.isFinite(createdAt) && createdAt >= cutoff
+        }))
       } catch {
         // Keep the last activity list and retry on the next polling cycle.
       } finally {
@@ -969,19 +975,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           </div>
         </header>
 
-        {uploadItems.length > 0 && <div className="upload-queue" aria-live="polite">
-          <div className="upload-queue-heading">
-            <strong>Uploads</strong>
-            <button type="button" onClick={() => setUploadItems((current) => current.filter((item) => item.status === 'queued' || item.status === 'uploading'))}>Clear finished</button>
-          </div>
-          {uploadItems.slice(0, 5).map((item) => (
-            <div className="upload-queue-item" key={item.id}>
-              <div className="upload-queue-copy"><span title={item.name}>{item.name}</span><small>{item.status === 'error' ? item.error : item.progress == null ? item.status : `${item.status} · ${item.progress}%`}</small></div>
-              <progress max="100" value={item.progress ?? 0} aria-label={`${item.name} upload progress`} />
-            </div>
-          ))}
-          {uploadItems.length > 5 && <small className="upload-queue-more">and {uploadItems.length - 5} more…</small>}
-        </div>}
+        <UploadQueue
+          items={uploadItems}
+          onClearFinished={() => setUploadItems((current) => current.filter((item) => item.status === 'queued' || item.status === 'uploading'))}
+        />
 
         <section className="content" id="assets">
           <div className="title-row">
@@ -1018,111 +1015,39 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           </div>}
 
           {activeSection === 'activity' ? (
-            activities.length ? (
-              <div className="activity-feed">
-                {activities.map((activity) => (
-                  <article className="activity-item" key={activity.id}>
-                    <span className={`activity-icon ${activity.type}`}>{activity.type === 'error' ? '!' : '◷'}</span>
-                    <div>
-                      <p>{activity.message}</p>
-                      <time>{activity.timestamp ? new Date(activity.timestamp).toLocaleString() : 'Just now'}</time>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty activity-empty"><strong>No activity yet</strong><span>Actions in your workspace will appear here in real time.</span></div>
-            )
+            <ActivityFeed activities={activities} />
           ) : activeSection === 'collections' ? (
-            collections.length ? (
-              <div className="collection-grid">
-                {collections.map((collection) => {
-                  const { imageAssets, imageCount, remainingCount } = getCollectionThumbnails(collection)
-                  return (
-                    <button className="collection-card" type="button" key={collection.id} onClick={() => navigate(workspacePath(`/collections/${collection.id}`))}>
-                      <span className="collection-thumbnails" aria-label={`${imageCount} collection images`}>
-                        {imageAssets.length ? imageAssets.map((asset) => (
-                          <span className="collection-thumbnail" key={asset.id}>
-                            <img src={asset.image} alt={asset.name} loading="lazy" />
-                          </span>
-                        )) : <span className="collection-thumbnail-empty">□</span>}
-                        {remainingCount > 0 && <span className="collection-thumbnail-more">+{remainingCount}</span>}
-                      </span>
-                      <strong>{collection.name}</strong>
-                      <span>{collection.assets?.length || 0} media</span>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="empty"><strong>No collections yet</strong><span>Create a collection to start organizing media.</span></div>
-            )
-          ) : visibleAssets.length ? (
-            <div className={`asset-grid ${view === 'list' ? 'list-view' : ''}`}>
-              {visibleAssets.map((asset, index) => (
-                <article
-                  className={`asset-card ${selected.includes(asset.name) ? 'selected' : ''}`}
-                  key={asset.id ?? `${asset.name}-${asset.updated}-${index}`}
-                  onClick={(event) => {
-                    if (event.target.closest('button')) return
-                    openAssetPreview(asset)
-                  }}
-                >
-                  <div className={`asset-preview ${asset.color}`} onClick={(event) => { event.stopPropagation(); openAssetPreview(asset) }} style={{ cursor: 'pointer' }}>
-                    {asset.kind === 'video' ? (
-                      <button className="video-thumbnail" type="button" onClick={(event) => { event.stopPropagation(); openAssetPreview(asset) }} aria-label={`Preview video ${asset.name}`}>
-                        <img src={asset.image} alt="" />
-                        <span aria-hidden="true">▶</span>
-                      </button>
-                    ) : (
-                      asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    )}
-                    <span className="asset-type">{asset.type}</span>
-                    <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); setMenu(menu === asset.name ? null : asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>
-                    {menu === asset.name && (
-                      <div className="menu">
-                        <button type="button" onClick={(event) => { event.stopPropagation(); setMenu(null); openAssetPreview(asset) }}>Open preview</button>
-                        <button type="button" onClick={(event) => { event.stopPropagation(); downloadAsset(asset) }}>Download</button>
-                        {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); renameAsset(asset) }}>Rename</button>}
-                        {activeSection === 'trash' ? (
-                          canManageWorkspace && <>
-                            <button type="button" onClick={(event) => { event.stopPropagation(); restoreAsset(asset) }}>Restore</button>
-                            {activeWorkspaceRole === 'admin' && <button type="button" onClick={(event) => { event.stopPropagation(); permanentlyDeleteAsset(asset) }}>Delete permanently</button>}
-                          </>
-                        ) : activeSection === 'collection' ? (
-                          canManageWorkspace && <button type="button" onClick={(event) => { event.stopPropagation(); removeAssetFromCollection(asset) }}>Remove from collection</button>
-                        ) : (
-                          canManageWorkspace && <>
-                            <button type="button" onClick={(event) => { event.stopPropagation(); setAssetToCollect(asset); setMenu(null) }}>Add to collection</button>
-                            <button type="button" onClick={(event) => { event.stopPropagation(); deleteAsset(asset) }}>Move to trash</button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="asset-info">
-                    <div>
-                      <h2>{asset.name}</h2>
-                      <p>{asset.size} <span>·</span> {asset.updated}</p>
-                    </div>
-                    {activeSection !== 'trash' && <button className={`star ${starred.includes(asset.name) ? 'starred' : ''}`} type="button" onClick={(event) => { event.stopPropagation(); toggleStar(asset.name) }} aria-label={`Star ${asset.name}`}>{starred.includes(asset.name) ? '★' : '☆'}</button>}
-                  </div>
-                </article>
-              ))}
-            </div>
+            <CollectionGrid
+              collections={collections}
+              getCollectionThumbnails={getCollectionThumbnails}
+              onSelectCollection={(collection) => navigate(workspacePath(`/collections/${collection.id}`))}
+            />
           ) : (
-            <div className="empty">
-              <strong>{activeSection === 'trash' ? 'Trash is empty' : 'No assets yet'}</strong>
-              <span>{activeSection === 'trash' ? 'Deleted assets will appear here.' : 'Upload a new file to start your library.'}</span>
-            </div>
+            <AssetGrid
+              assets={visibleAssets}
+              view={view}
+              selected={selected}
+              starred={starred}
+              activeSection={activeSection}
+              canManageWorkspace={canManageWorkspace}
+              isAdmin={activeWorkspaceRole === 'admin'}
+              menu={menu}
+              onToggleMenu={(name) => setMenu(menu === name ? null : name)}
+              onOpenPreview={openAssetPreview}
+              onDownload={downloadAsset}
+              onRename={renameAsset}
+              onRestore={restoreAsset}
+              onPermanentlyDelete={permanentlyDeleteAsset}
+              onRemoveFromCollection={removeAssetFromCollection}
+              onAddToCollection={(asset) => { setAssetToCollect(asset); setMenu(null) }}
+              onDelete={deleteAsset}
+              onToggleStar={toggleStar}
+            />
           )}
         </section>
       </main>
 
-      {notice && <div className="toast" role="status" aria-live="polite">
-        <span>{notice}</span>
-        <button className="toast-dismiss" type="button" onClick={() => setNotice('')} aria-label="Dismiss notification" title="Dismiss notification">Dismiss ×</button>
-      </div>}
+      <ToastNotification message={notice} onDismiss={() => setNotice('')} />
       {isCreateCollectionOpen && (
         <div className="modal-backdrop" onClick={() => setIsCreateCollectionOpen(false)}>
           <form className="asset-modal collection-modal" onSubmit={createCollection} onClick={(event) => event.stopPropagation()}>
@@ -1258,24 +1183,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           </div>
         </div>
       )}
-      {previewAsset && (
-        <div className="modal-backdrop" onClick={closeAssetPreview}>
-          <div className="asset-modal" onClick={(event) => event.stopPropagation()}>
-            <button className="modal-close" type="button" onClick={closeAssetPreview}>×</button>
-            {previewAsset.previewLoading ? (
-              <div className="asset-preview-loading" role="status">Loading original file…</div>
-            ) : previewAsset.kind === 'video' ? (
-              <video src={previewAsset.image} controls playsInline className="asset-modal-image" />
-            ) : (
-              <img src={previewAsset.image} alt={previewAsset.name} className="asset-modal-image" />
-            )}
-            <div className="asset-modal-copy">
-              <h3>{previewAsset.name}</h3>
-              <p>{previewAsset.size} · {previewAsset.type}</p>
-            </div>
-          </div>
-        </div>
-      )}
+      <AssetPreviewModal asset={previewAsset} onClose={closeAssetPreview} />
     </div>
   )
 }
