@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ActivityFeed, AssetGrid, AssetPreviewModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import BulkAssetActions from './components/BulkAssetActions.jsx'
+import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
 
 const hashCode = (str) => {
@@ -493,6 +495,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   }
 
   const addAssetToCollection = async (collection) => {
+    if (Array.isArray(assetToCollect?.bulkAssets)) {
+      await addSelectedAssetsToCollection(collection)
+      return
+    }
     if (!assetToCollect?.id || !/^[0-9a-f-]{36}$/i.test(assetToCollect.id)) {
       showNotice('Only saved assets can be added to a collection.')
       setAssetToCollect(null)
@@ -655,10 +661,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     : activeSection === 'collection'
       ? collectionAssets
       : assets
+  const selectedAssets = currentAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset)))
   const visibleAssets = useMemo(() => {
     const filtered = currentAssets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
   }, [currentAssets, filter, query, sort])
+  const selectedVisibleCount = visibleAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset))).length
+  const allVisibleSelected = visibleAssets.length > 0 && selectedVisibleCount === visibleAssets.length
 
   const totalAssetCount = assets.length
   const favoriteAssets = assets.filter((asset) => starred.includes(asset.name))
@@ -671,6 +680,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     return { ...current, [workspaceId]: nextNames }
   })
   const toggleStar = (name) => updateStarred((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
+  const toggleAssetSelection = (asset) => {
+    const key = getAssetSelectionKey(asset)
+    setSelected((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])
+  }
   const showNotice = (message) => {
     setNotice(message)
     setMenu(null)
@@ -733,11 +746,100 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       }
       setAssets((current) => current.filter((item) => item.id !== asset.id))
       setTrashAssets((current) => [{ ...asset, deleted_at: new Date().toISOString() }, ...current.filter((item) => item.id !== asset.id)])
-      setSelected((current) => current.filter((item) => item !== asset.name))
+      setSelected((current) => current.filter((item) => item !== getAssetSelectionKey(asset)))
       updateStarred((current) => current.filter((item) => item !== asset.name))
       showNotice(`${asset.name} moved to trash.`)
     } catch (error) {
       showNotice(error.message || 'Unable to move this asset to trash.')
+    }
+  }
+
+  const performBulkAssetAction = async (action) => {
+    const targets = [...selectedAssets]
+    if (!targets.length) return
+    if (action === 'permanentlyDelete' && !window.confirm(`Permanently delete ${targets.length} selected asset${targets.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+
+    const results = await Promise.all(targets.map(async (asset) => {
+      try {
+        const isPersisted = /^[0-9a-f-]{36}$/i.test(asset.id || '')
+        if (isPersisted) {
+          const endpoint = action === 'moveToTrash'
+            ? `/api/assets/${asset.id}/`
+            : action === 'restore'
+              ? `/api/assets/${asset.id}/restore/`
+              : `/api/assets/${asset.id}/permanent-delete/`
+          const response = await apiRequest(endpoint, { method: action === 'restore' ? 'POST' : 'DELETE' })
+          if (!response.ok) throw new Error('Action failed')
+        }
+        return { asset, ok: true }
+      } catch {
+        return { asset, ok: false }
+      }
+    }))
+
+    const succeeded = results.filter((result) => result.ok).map((result) => result.asset)
+    const failed = results.filter((result) => !result.ok).map((result) => result.asset)
+    setSelected(failed.map(getAssetSelectionKey))
+
+    if (action === 'moveToTrash') {
+      const removedIds = new Set(succeeded.map((asset) => asset.id))
+      const deletedAt = new Date().toISOString()
+      setAssets((current) => current.filter((asset) => !removedIds.has(asset.id)))
+      setTrashAssets((current) => [
+        ...succeeded.map((asset) => ({ ...asset, deleted_at: deletedAt })),
+        ...current.filter((asset) => !removedIds.has(asset.id)),
+      ])
+      const names = new Set(succeeded.map((asset) => asset.name))
+      updateStarred((current) => current.filter((name) => !names.has(name)))
+    } else if (action === 'restore') {
+      const restoredIds = new Set(succeeded.map((asset) => asset.id))
+      setTrashAssets((current) => current.filter((asset) => !restoredIds.has(asset.id)))
+      setAssets((current) => [
+        ...succeeded.map((asset) => ({ ...asset, deleted_at: null })),
+        ...current.filter((asset) => !restoredIds.has(asset.id)),
+      ])
+    } else {
+      const deletedIds = new Set(succeeded.map((asset) => asset.id))
+      setTrashAssets((current) => current.filter((asset) => !deletedIds.has(asset.id)))
+    }
+
+    const noun = succeeded.length === 1 ? 'asset' : 'assets'
+    const actionLabel = action === 'moveToTrash' ? 'moved to trash' : action === 'restore' ? 'restored' : 'permanently deleted'
+    showNotice(failed.length
+      ? `${succeeded.length} ${noun} ${actionLabel}; ${failed.length} failed. Failed items remain selected.`
+      : `${succeeded.length} ${noun} ${actionLabel}.`)
+  }
+
+  const toggleSelectedFavorites = () => {
+    const names = new Set(selectedAssets.map((asset) => asset.name))
+    const allStarred = selectedAssets.length > 0 && selectedAssets.every((asset) => starred.includes(asset.name))
+    updateStarred((current) => allStarred
+      ? current.filter((name) => !names.has(name))
+      : [...new Set([...current, ...names])])
+    showNotice(allStarred ? 'Selected assets removed from favorites.' : 'Selected assets added to favorites.')
+  }
+
+  const addSelectedAssetsToCollection = async (collection) => {
+    const selectedIds = selectedAssets.filter((asset) => /^[0-9a-f-]{36}$/i.test(asset.id || '')).map((asset) => asset.id)
+    if (!selectedIds.length) {
+      showNotice('Only saved assets can be added to a collection.')
+      setAssetToCollect(null)
+      return
+    }
+    try {
+      const response = await apiRequest(`/api/collections/${collection.id}/assets/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: selectedIds }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.detail || data?.asset_ids || 'Unable to add selected assets.')
+      setCollections((current) => current.map((item) => item.id === data.id ? data : item))
+      setAssetToCollect(null)
+      setSelected([])
+      showNotice(`${selectedIds.length} assets added to ${data.name}.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to add selected assets.')
     }
   }
 
@@ -801,7 +903,6 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       showNotice(error.message || 'Unable to rename this asset.')
       return
     }
-    setSelected((current) => current.map((item) => item === asset.name ? newName : item))
     updateStarred((current) => current.map((item) => item === asset.name ? newName : item))
     if (previewAsset?.name === asset.name) setPreviewAsset({ ...previewAsset, name: newName })
     showNotice(`${asset.name} renamed to ${newName}.`)
@@ -987,7 +1088,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : totalAssetCount}</span></h1>
               <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
-            {activeSection !== 'collections' && activeSection !== 'activity' && <button className="ghost" type="button" onClick={() => setSelected(selected.length ? [] : visibleAssets.map((asset) => asset.name))}>{selected.length ? `Clear (${selected.length})` : 'Select all'}</button>}
+            {activeSection !== 'collections' && activeSection !== 'activity' && <button className="ghost" type="button" onClick={() => setSelected((current) => {
+              const visibleKeys = visibleAssets.map(getAssetSelectionKey)
+              return allVisibleSelected ? current.filter((key) => !visibleKeys.includes(key)) : [...new Set([...current, ...visibleKeys])]
+            })}>{allVisibleSelected ? 'Clear visible' : 'Select all'}</button>}
           </div>
 
           {activeSection !== 'collections' && activeSection !== 'activity' && <div className="toolbar">
@@ -1014,6 +1118,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <span className="sync">● {totalAssetCount > 0 ? 'Library active' : 'No files yet'}</span>
           </div>}
 
+          {activeSection !== 'collections' && activeSection !== 'activity' && <BulkAssetActions
+            count={selectedAssets.length}
+            isTrash={activeSection === 'trash'}
+            canManageWorkspace={canManageWorkspace}
+            isAdmin={activeWorkspaceRole === 'admin'}
+            allStarred={selectedAssets.length > 0 && selectedAssets.every((asset) => starred.includes(asset.name))}
+            onAddToCollection={() => setAssetToCollect({ bulkAssets: selectedAssets })}
+            onToggleFavorites={toggleSelectedFavorites}
+            onMoveToTrash={() => performBulkAssetAction('moveToTrash')}
+            onRestore={() => performBulkAssetAction('restore')}
+            onDeletePermanently={() => performBulkAssetAction('permanentlyDelete')}
+            onClear={() => setSelected([])}
+          />}
+
           {activeSection === 'activity' ? (
             <ActivityFeed activities={activities} />
           ) : activeSection === 'collections' ? (
@@ -1032,6 +1150,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               canManageWorkspace={canManageWorkspace}
               isAdmin={activeWorkspaceRole === 'admin'}
               menu={menu}
+              onToggleSelect={toggleAssetSelection}
               onToggleMenu={(name) => setMenu(menu === name ? null : name)}
               onOpenPreview={openAssetPreview}
               onDownload={downloadAsset}
@@ -1073,7 +1192,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <button className="modal-close" type="button" onClick={() => setAssetToCollect(null)}>×</button>
             <div className="asset-modal-copy">
               <h3>Add to collection</h3>
-              <p>Choose a collection for {assetToCollect.name}.</p>
+              <p>{Array.isArray(assetToCollect.bulkAssets)
+                ? `Choose a collection for ${assetToCollect.bulkAssets.length} selected assets.`
+                : `Choose a collection for ${assetToCollect.name}.`}</p>
             </div>
             {collections.length ? (
               <div className="collection-picker">

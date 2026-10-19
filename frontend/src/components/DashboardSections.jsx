@@ -2,6 +2,7 @@ import ActivityItem from './ActivityItem.jsx'
 import AssetCard from './AssetCard.jsx'
 import CollectionCard from './CollectionCard.jsx'
 import UploadQueueItem from './UploadQueueItem.jsx'
+import { getAssetSelectionKey } from './assetSelection.js'
 
 export function UploadQueue({ items, onClearFinished }) {
   if (!items.length) return null
@@ -53,6 +54,7 @@ export function AssetGrid({
   canManageWorkspace,
   isAdmin,
   menu,
+  onToggleSelect,
   onToggleMenu,
   onOpenPreview,
   onDownload,
@@ -79,12 +81,13 @@ export function AssetGrid({
         <AssetCard
           key={asset.id ?? `${asset.name}-${asset.updated}`}
           asset={asset}
-          isSelected={selected.includes(asset.name)}
+          isSelected={selected.includes(getAssetSelectionKey(asset))}
           isStarred={starred.includes(asset.name)}
           activeSection={activeSection}
           canManageWorkspace={canManageWorkspace}
           isAdmin={isAdmin}
           isMenuOpen={menu === asset.name}
+          onToggleSelect={onToggleSelect}
           onToggleMenu={onToggleMenu}
           onOpenPreview={onOpenPreview}
           onDownload={onDownload}

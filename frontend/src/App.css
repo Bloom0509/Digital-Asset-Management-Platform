@@ -358,6 +358,71 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   }
 }
 
+.asset-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+
+.asset-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green-deep);
+  cursor: pointer;
+}
+
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  background: var(--toolbar-bg);
+}
+
+.bulk-actions strong {
+  margin-right: 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.bulk-actions button {
+  padding: 8px 11px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.bulk-actions button:hover {
+  border-color: #9db87b;
+}
+
+.bulk-actions button.bulk-danger {
+  border-color: #e4b8ad;
+  color: #9a3428;
+}
+
+.theme-dark .bulk-actions button.bulk-danger {
+  border-color: #754039;
+  color: #ffb3a5;
+}
+
 .toast {
   display: flex;
   align-items: center;

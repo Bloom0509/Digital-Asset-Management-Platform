@@ -29,6 +29,7 @@ export default function AssetCard({
   canManageWorkspace,
   isAdmin,
   isMenuOpen,
+  onToggleSelect,
   onToggleMenu,
   onOpenPreview,
   onDownload,
@@ -86,11 +87,16 @@ export default function AssetCard({
           <h2>{asset.name}</h2>
           <p>{asset.size} <span>·</span> {asset.updated}</p>
         </div>
-        {activeSection !== 'trash' && (
-          <button className={`star ${isStarred ? 'starred' : ''}`} type="button" onClick={(event) => stopAnd(event, onToggleStar)} aria-label={`${isStarred ? 'Unstar' : 'Star'} ${asset.name}`}>
-            {isStarred ? '★' : '☆'}
-          </button>
-        )}
+        <div className="asset-card-actions">
+          <label className="asset-select" onClick={(event) => event.stopPropagation()}>
+            <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(asset)} aria-label={`Select ${asset.name}`} />
+          </label>
+          {activeSection !== 'trash' && (
+            <button className={`star ${isStarred ? 'starred' : ''}`} type="button" onClick={(event) => stopAnd(event, onToggleStar)} aria-label={`${isStarred ? 'Unstar' : 'Star'} ${asset.name}`}>
+              {isStarred ? '★' : '☆'}
+            </button>
+          )}
+        </div>
       </div>
     </article>
   )
