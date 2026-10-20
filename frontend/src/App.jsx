@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetPreviewModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -49,6 +49,56 @@ const initialCustomAssetForm = {
   type: 'JPG',
   size: '1.2 MB',
 }
+
+const emptyMetadataForm = {
+  tags: '',
+  description: '',
+  alt_text: '',
+  creator: '',
+  campaign: '',
+  license: '',
+  custom_fields: '',
+}
+
+const parseMetadataForm = (form) => {
+  const tags = [...new Map(form.tags.split(',').map((tag) => tag.trim()).filter(Boolean).map((tag) => [tag.toLocaleLowerCase(), tag])).values()]
+  if (tags.length > 20 || tags.some((tag) => tag.length > 50)) {
+    throw new Error('Use up to 20 tags, each 50 characters or fewer.')
+  }
+
+  const customFields = {}
+  for (const line of form.custom_fields.split('\n').map((item) => item.trim()).filter(Boolean)) {
+    const separator = line.indexOf(':')
+    if (separator < 1) throw new Error('Custom fields must use “name: value” on each line.')
+    const key = line.slice(0, separator).trim()
+    const value = line.slice(separator + 1).trim()
+    if (!key || key.length > 50 || value.length > 500 || Object.hasOwn(customFields, key)) {
+      throw new Error('Custom field names must be unique (up to 50 characters) and values up to 500 characters.')
+    }
+    customFields[key] = value
+  }
+  if (Object.keys(customFields).length > 20) throw new Error('Use no more than 20 custom fields.')
+
+  return {
+    tags,
+    description: form.description.trim(),
+    alt_text: form.alt_text.trim(),
+    creator: form.creator.trim(),
+    campaign: form.campaign.trim(),
+    license: form.license.trim(),
+    custom_fields: customFields,
+  }
+}
+
+const metadataFormFromAsset = (asset) => ({
+  tags: (asset.tags || []).join(', '),
+  description: asset.description || '',
+  alt_text: asset.alt_text || '',
+  creator: asset.creator || '',
+  campaign: asset.campaign || '',
+  license: asset.license || '',
+  custom_fields: Object.entries(asset.custom_fields || {}).map(([key, value]) => `${key}: ${value}`).join('\n'),
+})
 
 function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, authMessage, onLogin, onSignup, theme, toggleTheme }) {
   const isLogin = authMode === 'login'
@@ -290,12 +340,19 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [uploadItems, setUploadItems] = useState([])
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
+  const [metadataAsset, setMetadataAsset] = useState(null)
+  const [metadataForm, setMetadataForm] = useState(metadataFormFromAsset({}))
+  const [isSavingMetadata, setIsSavingMetadata] = useState(false)
   const previewObjectUrl = useRef(null)
   const previewRequest = useRef(0)
   const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
   const canManageWorkspace = ['admin', 'editor'].includes(activeWorkspaceRole)
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
   const [customAssetForm, setCustomAssetForm] = useState(initialCustomAssetForm)
+  const [customAssetMetadata, setCustomAssetMetadata] = useState(emptyMetadataForm)
+  const [pendingUploadFiles, setPendingUploadFiles] = useState([])
+  const [uploadMetadataForm, setUploadMetadataForm] = useState(emptyMetadataForm)
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState(null)
   const [drawingDataUrl, setDrawingDataUrl] = useState('')
   const [selectedDrawingIdea, setSelectedDrawingIdea] = useState('')
@@ -663,7 +720,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       : assets
   const selectedAssets = currentAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset)))
   const visibleAssets = useMemo(() => {
-    const filtered = currentAssets.filter((asset) => asset.name.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || asset.type === filter))
+    const normalizedQuery = query.trim().toLowerCase()
+    const filtered = currentAssets.filter((asset) => {
+      const searchableText = [
+        asset.name,
+        asset.description,
+        asset.alt_text,
+        asset.creator,
+        asset.campaign,
+        asset.license,
+        ...(asset.tags || []),
+        ...Object.entries(asset.custom_fields || {}).flat(),
+      ].join(' ').toLowerCase()
+      return searchableText.includes(normalizedQuery) && (filter === 'all' || asset.type === filter)
+    })
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
   }, [currentAssets, filter, query, sort])
   const selectedVisibleCount = visibleAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset))).length
@@ -908,17 +978,83 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     showNotice(`${asset.name} renamed to ${newName}.`)
   }
 
-  const handleFiles = async (event) => {
+  const openMetadataEditor = (asset) => {
+    setMetadataAsset(asset)
+    setMetadataForm(metadataFormFromAsset(asset))
+    setMenu(null)
+  }
+
+  const saveAssetMetadata = async (event) => {
+    event.preventDefault()
+    if (!metadataAsset || !/^[0-9a-f-]{36}$/i.test(metadataAsset.id || '')) {
+      showNotice('Only saved assets can have metadata edited.')
+      return
+    }
+
+    let metadata
+    try {
+      metadata = parseMetadataForm(metadataForm)
+    } catch (error) {
+      showNotice(error.message)
+      return
+    }
+
+    setIsSavingMetadata(true)
+    try {
+      const response = await apiRequest(`/api/assets/${metadataAsset.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metadata),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const detail = data?.detail || Object.values(data || {}).flat()?.[0]
+        throw new Error(detail || 'Unable to save asset metadata.')
+      }
+
+      const mappedAsset = mapApiAsset(data)
+      const updatedAsset = { ...metadataAsset, ...mappedAsset, image: metadataAsset.image || mappedAsset.image }
+      const replaceAsset = (asset) => asset.id === updatedAsset.id ? { ...asset, ...updatedAsset } : asset
+      setAssets((current) => current.map(replaceAsset))
+      setTrashAssets((current) => current.map(replaceAsset))
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).map(replaceAsset),
+      })))
+      setPreviewAsset((current) => current?.id === updatedAsset.id ? { ...current, ...updatedAsset } : current)
+      setMetadataAsset(null)
+      showNotice('Asset metadata saved.')
+    } catch (error) {
+      showNotice(error.message || 'Unable to save asset metadata.')
+    } finally {
+      setIsSavingMetadata(false)
+    }
+  }
+
+  const handleFiles = (event) => {
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
     event.target.value = ''
+    setPendingUploadFiles(files)
+    setUploadMetadataForm(emptyMetadataForm)
+  }
+
+  const uploadFiles = async (files, metadata) => {
     const queue = files.map((file) => ({ id: crypto.randomUUID(), file, name: file.name }))
     setUploadItems((current) => [...queue.map(({ id, name }) => ({ id, name, progress: 0, status: 'queued' })), ...current])
+    setIsUploadingFiles(true)
 
     const uploadOne = ({ id, file }) => new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       const formData = new FormData()
       formData.append('file', file)
+      formData.append('tags', JSON.stringify(metadata.tags))
+      formData.append('description', metadata.description)
+      formData.append('alt_text', metadata.alt_text)
+      formData.append('creator', metadata.creator)
+      formData.append('campaign', metadata.campaign)
+      formData.append('license', metadata.license)
+      formData.append('custom_fields', JSON.stringify(metadata.custom_fields))
       xhr.open('POST', '/api/assets/upload/')
       const token = window.localStorage.getItem('dam_token')
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
@@ -933,7 +1069,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         let data = {}
         try { data = JSON.parse(xhr.responseText) } catch { /* The server returned no JSON body. */ }
         if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(data?.file?.[0] || data?.detail || 'Upload failed.'))
+          reject(new Error(data?.file?.[0] || data?.detail || Object.values(data || {}).flat()?.[0] || 'Upload failed.'))
           return
         }
         resolve(data)
@@ -958,13 +1094,35 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     const completed = results.filter((result) => result.ok).length
     const failures = results.length - completed
+    setIsUploadingFiles(false)
+    setPendingUploadFiles([])
     showNotice(failures ? `${completed} uploaded, ${failures} failed.` : `${completed} file${completed === 1 ? '' : 's'} uploaded.`)
+  }
+
+  const submitUploadMetadata = async (event) => {
+    event.preventDefault()
+    let metadata
+    try {
+      metadata = parseMetadataForm(uploadMetadataForm)
+    } catch (error) {
+      showNotice(error.message)
+      return
+    }
+    await uploadFiles(pendingUploadFiles, metadata)
   }
 
   const handleCreateCustomAsset = async () => {
     const trimmedName = customAssetForm.name.trim()
     if (!trimmedName) {
       showNotice('Asset name is required.')
+      return
+    }
+
+    let assetMetadata
+    try {
+      assetMetadata = parseMetadataForm(customAssetMetadata)
+    } catch (error) {
+      showNotice(error.message)
       return
     }
 
@@ -986,6 +1144,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           generated_from: 'custom asset modal',
           ...(drawingDataUrl ? { doodle_image_data_url: drawingDataUrl } : {}),
         },
+        ...assetMetadata,
       }
 
       const response = await apiRequest('/api/assets/', {
@@ -1003,6 +1162,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       }
 
       const newAsset = {
+        ...mapApiAsset(data),
         id: data.id || `custom-${creationId}`,
         name: data.name || trimmedName,
         type: data.metadata?.type || type,
@@ -1016,6 +1176,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       setAssets((current) => [newAsset, ...current])
       setCustomAssetOpen(false)
       setCustomAssetForm(initialCustomAssetForm)
+      setCustomAssetMetadata(emptyMetadataForm)
       setDrawingDataUrl('')
       setSelectedDrawingIdea('')
       showNotice(`${trimmedName} created successfully.`)
@@ -1155,6 +1316,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               onOpenPreview={openAssetPreview}
               onDownload={downloadAsset}
               onRename={renameAsset}
+              onEditMetadata={openMetadataEditor}
               onRestore={restoreAsset}
               onPermanentlyDelete={permanentlyDeleteAsset}
               onRemoveFromCollection={removeAssetFromCollection}
@@ -1244,12 +1406,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
                     <button
                       type="button"
                       className="upload secondary ai-apply"
-                      onClick={() => setCustomAssetForm((current) => ({
-                        ...current,
-                        name: current.name || aiSuggestions.filename.replace(/\.[^.]+$/, ''),
-                      }))}
+                      onClick={() => {
+                        setCustomAssetForm((current) => ({
+                          ...current,
+                          name: current.name || aiSuggestions.filename.replace(/\.[^.]+$/, ''),
+                        }))
+                        setCustomAssetMetadata((current) => ({
+                          ...current,
+                          tags: aiSuggestions.tags?.join(', ') || current.tags,
+                          alt_text: aiSuggestions.alt_text || current.alt_text,
+                          description: aiSuggestions.caption || current.description,
+                        }))
+                      }}
                     >
-                      Use suggested name
+                      Apply AI suggestions
                     </button>
                   </>
                 ) : (
@@ -1290,6 +1460,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
                   />
                 </label>
               </div>
+              <AssetMetadataFields form={customAssetMetadata} onChange={setCustomAssetMetadata} className="creation-metadata-fields" />
               <DoodleCanvas
                 onDrawingChange={setDrawingDataUrl}
                 selectedIdea={selectedDrawingIdea}
@@ -1305,6 +1476,23 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         </div>
       )}
       <AssetPreviewModal asset={previewAsset} onClose={closeAssetPreview} />
+      {pendingUploadFiles.length > 0 && <AssetMetadataModal
+        form={uploadMetadataForm}
+        isSaving={isUploadingFiles}
+        title="Upload assets"
+        description={`Set metadata to apply to all ${pendingUploadFiles.length} selected file${pendingUploadFiles.length === 1 ? '' : 's'}.`}
+        submitLabel={`Upload ${pendingUploadFiles.length} file${pendingUploadFiles.length === 1 ? '' : 's'}`}
+        onChange={setUploadMetadataForm}
+        onClose={() => { if (!isUploadingFiles) setPendingUploadFiles([]) }}
+        onSubmit={submitUploadMetadata}
+      />}
+      {metadataAsset && <AssetMetadataModal
+        form={metadataForm}
+        isSaving={isSavingMetadata}
+        onChange={setMetadataForm}
+        onClose={() => { if (!isSavingMetadata) setMetadataAsset(null) }}
+        onSubmit={saveAssetMetadata}
+      />}
     </div>
   )
 }

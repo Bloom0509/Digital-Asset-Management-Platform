@@ -59,6 +59,7 @@ export function AssetGrid({
   onOpenPreview,
   onDownload,
   onRename,
+  onEditMetadata,
   onRestore,
   onPermanentlyDelete,
   onRemoveFromCollection,
@@ -92,6 +93,7 @@ export function AssetGrid({
           onOpenPreview={onOpenPreview}
           onDownload={onDownload}
           onRename={onRename}
+          onEditMetadata={onEditMetadata}
           onRestore={onRestore}
           onPermanentlyDelete={onPermanentlyDelete}
           onRemoveFromCollection={onRemoveFromCollection}
@@ -132,8 +134,82 @@ export function AssetPreviewModal({ asset, onClose }) {
         <div className="asset-modal-copy">
           <h3>{asset.name}</h3>
           <p>{asset.size} · {asset.type}</p>
+          {asset.description && <p className="asset-description">{asset.description}</p>}
+          {asset.alt_text && <p className="asset-metadata-line"><strong>Alt text:</strong> {asset.alt_text}</p>}
+          {!!asset.tags?.length && <div className="asset-tags preview-tags">{asset.tags.map((tag) => <span className="asset-tag" key={tag}>{tag}</span>)}</div>}
+          {(asset.creator || asset.campaign || asset.license) && (
+            <dl className="asset-metadata-list">
+              {asset.creator && <div><dt>Creator</dt><dd>{asset.creator}</dd></div>}
+              {asset.campaign && <div><dt>Campaign</dt><dd>{asset.campaign}</dd></div>}
+              {asset.license && <div><dt>License</dt><dd>{asset.license}</dd></div>}
+            </dl>
+          )}
+          {!!Object.keys(asset.custom_fields || {}).length && (
+            <dl className="asset-metadata-list custom-metadata-list">
+              {Object.entries(asset.custom_fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}
+            </dl>
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+export function AssetMetadataFields({ form, onChange, className = '' }) {
+  const updateField = (event) => onChange((current) => ({ ...current, [event.target.name]: event.target.value }))
+
+  return (
+    <div className={`metadata-form-grid ${className}`}>
+      <label className="metadata-full-width">
+        <span>Tags</span>
+        <input name="tags" value={form.tags} onChange={updateField} placeholder="brand, campaign, approved" />
+        <small>Separate tags with commas (up to 20).</small>
+      </label>
+      <label className="metadata-full-width">
+        <span>Description</span>
+        <textarea name="description" value={form.description} onChange={updateField} maxLength={5000} rows={3} placeholder="What is this asset for?" />
+      </label>
+      <label className="metadata-full-width">
+        <span>Alt text</span>
+        <input name="alt_text" value={form.alt_text} onChange={updateField} maxLength={500} placeholder="Accessible description of the visual" />
+      </label>
+      <label>
+        <span>Creator / credit</span>
+        <input name="creator" value={form.creator} onChange={updateField} maxLength={150} placeholder="Photographer or team" />
+      </label>
+      <label>
+        <span>Campaign</span>
+        <input name="campaign" value={form.campaign} onChange={updateField} maxLength={150} placeholder="Spring launch" />
+      </label>
+      <label className="metadata-full-width">
+        <span>License / usage rights</span>
+        <input name="license" value={form.license} onChange={updateField} maxLength={150} placeholder="Internal use, CC BY 4.0, etc." />
+      </label>
+      <label className="metadata-full-width">
+        <span>Custom fields</span>
+        <textarea name="custom_fields" value={form.custom_fields} onChange={updateField} rows={3} placeholder={'Brand: Acme\nRegion: North America'} />
+        <small>One “name: value” field per line (up to 20).</small>
+      </label>
+    </div>
+  )
+}
+
+export function AssetMetadataModal({ form, isSaving, onChange, onClose, onSubmit, title = 'Edit metadata', description = 'Improve discovery and give your team the context they need.', submitLabel = 'Save metadata' }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="asset-modal metadata-modal" onSubmit={onSubmit} onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" type="button" onClick={onClose} aria-label="Close metadata editor">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">ASSET DETAILS</p>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+        <AssetMetadataFields form={form} onChange={onChange} />
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
+          <button type="submit" className="upload create-submit" disabled={isSaving}>{isSaving ? 'Saving…' : submitLabel}</button>
+        </div>
+      </form>
     </div>
   )
 }

@@ -24,7 +24,16 @@ class AssetAccessTests(TestCase):
                 file_content = b"private image bytes"
                 upload_response = owner_client.post(
                     "/api/assets/upload/",
-                    {"file": SimpleUploadedFile("campaign.png", file_content, content_type="image/png")},
+                    {
+                        "file": SimpleUploadedFile("campaign.png", file_content, content_type="image/png"),
+                        "tags": json.dumps(["summer", "launch"]),
+                        "description": "Summer campaign artwork",
+                        "alt_text": "A blue campaign graphic",
+                        "creator": "Design team",
+                        "campaign": "Summer 2026",
+                        "license": "Internal use",
+                        "custom_fields": json.dumps({"Brand": "Acme"}),
+                    },
                     format="multipart",
                 )
 
@@ -33,6 +42,13 @@ class AssetAccessTests(TestCase):
                 self.assertEqual(asset_data["name"], "campaign.png")
                 self.assertEqual(asset_data["size_bytes"], len(file_content))
                 self.assertEqual(asset_data["content_type"], "image/png")
+                self.assertEqual(asset_data["tags"], ["summer", "launch"])
+                self.assertEqual(asset_data["description"], "Summer campaign artwork")
+                self.assertEqual(asset_data["alt_text"], "A blue campaign graphic")
+                self.assertEqual(asset_data["creator"], "Design team")
+                self.assertEqual(asset_data["campaign"], "Summer 2026")
+                self.assertEqual(asset_data["license"], "Internal use")
+                self.assertEqual(asset_data["custom_fields"], {"Brand": "Acme"})
 
                 asset = owner_client.get(f"/api/assets/{asset_data['id']}/").json()
                 stored_path = Path(media_root, asset["object_key"])
@@ -138,6 +154,63 @@ class AssetAccessTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["name"], "Campaign banner")
         self.assertIsNotNone(user.active_tenant)
+
+    def test_asset_metadata_can_be_created_and_updated(self):
+        user = get_user_model().objects.create_user(
+            username=f"metadata-user-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        create_response = client.post(
+            "/api/assets/",
+            {
+                "name": "Spring campaign banner",
+                "object_key": f"metadata/{uuid.uuid4().hex}.png",
+                "content_type": "image/png",
+                "tags": ["Spring", "Campaign", " spring "],
+                "description": "Homepage hero image for the spring launch.",
+                "alt_text": "A flower illustration on a green background.",
+                "creator": "Design team",
+                "campaign": "Spring 2026",
+                "license": "Internal use only",
+                "custom_fields": {"Brand": "Acme", "Region": "North America"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, 201, create_response.content)
+        asset_id = create_response.json()["id"]
+        self.assertEqual(create_response.json()["tags"], ["Spring", "Campaign"])
+        self.assertEqual(create_response.json()["custom_fields"]["Brand"], "Acme")
+
+        update_response = client.patch(
+            reverse("asset-detail", args=[asset_id]),
+            {"tags": ["approved"], "description": "Final approved artwork."},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200, update_response.content)
+        self.assertEqual(update_response.json()["tags"], ["approved"])
+        self.assertEqual(update_response.json()["description"], "Final approved artwork.")
+        self.assertEqual(update_response.json()["creator"], "Design team")
+
+    def test_asset_metadata_rejects_too_many_tags(self):
+        user = get_user_model().objects.create_user(
+            username=f"metadata-limit-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.post(
+            "/api/assets/",
+            {
+                "name": "Too many tags",
+                "object_key": f"metadata/{uuid.uuid4().hex}.png",
+                "content_type": "image/png",
+                "tags": [f"tag-{index}" for index in range(21)],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("20 tags", response.json()["tags"][0])
 
     def test_delete_moves_asset_to_trash_and_it_can_be_restored_or_deleted_permanently(self):
         username = f"trashuser-{uuid.uuid4().hex[:8]}"

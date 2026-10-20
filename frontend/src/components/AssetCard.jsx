@@ -1,9 +1,10 @@
-function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
+function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onEditMetadata, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
   return (
     <div className="menu">
       <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenPreview(asset) }}>Open preview</button>
       <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(asset) }}>Download</button>
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onRename(asset) }}>Rename</button>}
+      {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit metadata</button>}
       {activeSection === 'trash' ? (
         canManageWorkspace && <>
           <button type="button" onClick={(event) => { event.stopPropagation(); onRestore(asset) }}>Restore</button>
@@ -34,6 +35,7 @@ export default function AssetCard({
   onOpenPreview,
   onDownload,
   onRename,
+  onEditMetadata,
   onRestore,
   onPermanentlyDelete,
   onRemoveFromCollection,
@@ -73,6 +75,7 @@ export default function AssetCard({
             onOpenPreview={onOpenPreview}
             onDownload={onDownload}
             onRename={onRename}
+            onEditMetadata={onEditMetadata}
             onRestore={onRestore}
             onPermanentlyDelete={onPermanentlyDelete}
             onRemoveFromCollection={onRemoveFromCollection}
@@ -86,6 +89,12 @@ export default function AssetCard({
         <div>
           <h2>{asset.name}</h2>
           <p>{asset.size} <span>·</span> {asset.updated}</p>
+          {asset.tags?.length > 0 && (
+            <div className="asset-tags" aria-label="Asset tags">
+              {asset.tags.slice(0, 3).map((tag) => <span className="asset-tag" key={tag}>{tag}</span>)}
+              {asset.tags.length > 3 && <span className="asset-tag-more">+{asset.tags.length - 3}</span>}
+            </div>
+          )}
         </div>
         <div className="asset-card-actions">
           <label className="asset-select" onClick={(event) => event.stopPropagation()}>

@@ -59,9 +59,15 @@ class AssetViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         previous_name = serializer.instance.name
+        previous_metadata = {
+            field: getattr(serializer.instance, field)
+            for field in ("tags", "description", "alt_text", "creator", "campaign", "license", "custom_fields")
+        }
         asset = serializer.save()
         if asset.name != previous_name:
             record_activity(asset.tenant, self.request.user, f'Renamed asset “{previous_name}” to “{asset.name}”.')
+        elif any(getattr(asset, field) != value for field, value in previous_metadata.items()):
+            record_activity(asset.tenant, self.request.user, f'Updated metadata for “{asset.name}”.')
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
@@ -114,6 +120,13 @@ class AssetViewSet(viewsets.ModelViewSet):
             content_type=content_type,
             size_bytes=uploaded_file.size,
             metadata={'original_filename': Path(uploaded_file.name).name, 'type': extension.lstrip('.').upper()},
+            tags=upload_serializer.validated_data['tags'],
+            description=upload_serializer.validated_data.get('description', ''),
+            alt_text=upload_serializer.validated_data.get('alt_text', ''),
+            creator=upload_serializer.validated_data.get('creator', ''),
+            campaign=upload_serializer.validated_data.get('campaign', ''),
+            license=upload_serializer.validated_data.get('license', ''),
+            custom_fields=upload_serializer.validated_data['custom_fields'],
             file=uploaded_file,
         )
         asset.save()
