@@ -325,6 +325,17 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [filter, setFilter] = useState('all')
+  const [advancedFilters, setAdvancedFilters] = useState({
+    tag: '',
+    creator: '',
+    campaign: '',
+    license: '',
+    dateFrom: '',
+    dateTo: '',
+    minSize: '',
+    maxSize: '',
+  })
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [view, setView] = useState('grid')
   const [selected, setSelected] = useState([])
   const [starredByWorkspace, setStarredByWorkspace] = useState(() => {
@@ -718,10 +729,19 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     : activeSection === 'collection'
       ? collectionAssets
       : assets
+  const metadataFilterOptions = useMemo(() => ({
+    tags: [...new Set(currentAssets.flatMap((asset) => asset.tags || []))].sort((a, b) => a.localeCompare(b)),
+    creators: [...new Set(currentAssets.map((asset) => asset.creator).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    campaigns: [...new Set(currentAssets.map((asset) => asset.campaign).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    licenses: [...new Set(currentAssets.map((asset) => asset.license).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+  }), [currentAssets])
   const selectedAssets = currentAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset)))
   const visibleAssets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     const filtered = currentAssets.filter((asset) => {
+      const createdTime = Date.parse(asset.created_at || '')
+      const minimumSize = advancedFilters.minSize === '' ? null : Number(advancedFilters.minSize) * 1024 * 1024
+      const maximumSize = advancedFilters.maxSize === '' ? null : Number(advancedFilters.maxSize) * 1024 * 1024
       const searchableText = [
         asset.name,
         asset.description,
@@ -732,10 +752,28 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         ...(asset.tags || []),
         ...Object.entries(asset.custom_fields || {}).flat(),
       ].join(' ').toLowerCase()
-      return searchableText.includes(normalizedQuery) && (filter === 'all' || asset.type === filter)
+      const matchesTag = !advancedFilters.tag || (asset.tags || []).some((tag) => tag.toLocaleLowerCase() === advancedFilters.tag.toLocaleLowerCase())
+      const matchesCreator = !advancedFilters.creator || (asset.creator || '').toLocaleLowerCase().includes(advancedFilters.creator.toLocaleLowerCase())
+      const matchesCampaign = !advancedFilters.campaign || (asset.campaign || '').toLocaleLowerCase().includes(advancedFilters.campaign.toLocaleLowerCase())
+      const matchesLicense = !advancedFilters.license || (asset.license || '').toLocaleLowerCase().includes(advancedFilters.license.toLocaleLowerCase())
+      const matchesDateFrom = !advancedFilters.dateFrom || (Number.isFinite(createdTime) && createdTime >= new Date(`${advancedFilters.dateFrom}T00:00:00`).getTime())
+      const matchesDateTo = !advancedFilters.dateTo || (Number.isFinite(createdTime) && createdTime <= new Date(`${advancedFilters.dateTo}T23:59:59.999`).getTime())
+      const matchesMinimumSize = minimumSize === null || Number(asset.size_bytes || 0) >= minimumSize
+      const matchesMaximumSize = maximumSize === null || Number(asset.size_bytes || 0) <= maximumSize
+      return searchableText.includes(normalizedQuery)
+        && (filter === 'all' || asset.type === filter)
+        && matchesTag
+        && matchesCreator
+        && matchesCampaign
+        && matchesLicense
+        && matchesDateFrom
+        && matchesDateTo
+        && matchesMinimumSize
+        && matchesMaximumSize
     })
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
-  }, [currentAssets, filter, query, sort])
+  }, [advancedFilters, currentAssets, filter, query, sort])
+  const activeAdvancedFilterCount = Object.values(advancedFilters).filter(Boolean).length
   const selectedVisibleCount = visibleAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset))).length
   const allVisibleSelected = visibleAssets.length > 0 && selectedVisibleCount === visibleAssets.length
 
@@ -816,6 +854,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       }
       setAssets((current) => current.filter((item) => item.id !== asset.id))
       setTrashAssets((current) => [{ ...asset, deleted_at: new Date().toISOString() }, ...current.filter((item) => item.id !== asset.id)])
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).filter((item) => item.id !== asset.id),
+      })))
       setSelected((current) => current.filter((item) => item !== getAssetSelectionKey(asset)))
       updateStarred((current) => current.filter((item) => item !== asset.name))
       showNotice(`${asset.name} moved to trash.`)
@@ -1271,8 +1313,67 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} type="button" onClick={() => setView('list')} aria-label="List view">☷</button>
           </div>}
 
+          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="advanced-filter-tools">
+            <button
+              className={`ghost advanced-filter-toggle ${showAdvancedFilters || activeAdvancedFilterCount ? 'active' : ''}`}
+              type="button"
+              aria-expanded={showAdvancedFilters}
+              onClick={() => setShowAdvancedFilters((current) => !current)}
+            >
+              <span aria-hidden="true">☷</span> Advanced filters{activeAdvancedFilterCount ? ` · ${activeAdvancedFilterCount}` : ''}
+            </button>
+            {activeAdvancedFilterCount > 0 && <button className="filter-reset" type="button" onClick={() => setAdvancedFilters({ tag: '', creator: '', campaign: '', license: '', dateFrom: '', dateTo: '', minSize: '', maxSize: '' })}>Clear filters</button>}
+          </div>}
+
+          {showAdvancedFilters && activeSection !== 'collections' && activeSection !== 'activity' && <div className="advanced-filter-panel" aria-label="Advanced asset filters">
+            <label>
+              <span>Tag</span>
+              <select value={advancedFilters.tag} onChange={(event) => setAdvancedFilters((current) => ({ ...current, tag: event.target.value }))}>
+                <option value="">Any tag</option>
+                {metadataFilterOptions.tags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Creator</span>
+              <select value={advancedFilters.creator} onChange={(event) => setAdvancedFilters((current) => ({ ...current, creator: event.target.value }))}>
+                <option value="">Any creator</option>
+                {metadataFilterOptions.creators.map((creator) => <option value={creator} key={creator}>{creator}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Campaign</span>
+              <select value={advancedFilters.campaign} onChange={(event) => setAdvancedFilters((current) => ({ ...current, campaign: event.target.value }))}>
+                <option value="">Any campaign</option>
+                {metadataFilterOptions.campaigns.map((campaign) => <option value={campaign} key={campaign}>{campaign}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>License</span>
+              <select value={advancedFilters.license} onChange={(event) => setAdvancedFilters((current) => ({ ...current, license: event.target.value }))}>
+                <option value="">Any license</option>
+                {metadataFilterOptions.licenses.map((license) => <option value={license} key={license}>{license}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Uploaded from</span>
+              <input type="date" value={advancedFilters.dateFrom} max={advancedFilters.dateTo || undefined} onChange={(event) => setAdvancedFilters((current) => ({ ...current, dateFrom: event.target.value }))} />
+            </label>
+            <label>
+              <span>Uploaded to</span>
+              <input type="date" value={advancedFilters.dateTo} min={advancedFilters.dateFrom || undefined} onChange={(event) => setAdvancedFilters((current) => ({ ...current, dateTo: event.target.value }))} />
+            </label>
+            <label>
+              <span>Minimum size (MB)</span>
+              <input type="number" min="0" step="0.1" value={advancedFilters.minSize} onChange={(event) => setAdvancedFilters((current) => ({ ...current, minSize: event.target.value }))} placeholder="0" />
+            </label>
+            <label>
+              <span>Maximum size (MB)</span>
+              <input type="number" min="0" step="0.1" value={advancedFilters.maxSize} onChange={(event) => setAdvancedFilters((current) => ({ ...current, maxSize: event.target.value }))} placeholder="Any" />
+            </label>
+          </div>}
+
           {activeSection !== 'collections' && activeSection !== 'activity' && <div className="summary">
-            <span><b>{visibleAssets.length}</b> assets shown</span>
+            <span><b>{visibleAssets.length}</b> of {currentAssets.length} assets shown</span>
             <span className="dot-separator" />
             <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
             <span className="summary-spacer" />

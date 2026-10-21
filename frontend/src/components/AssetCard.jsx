@@ -11,11 +11,28 @@ function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOp
           {isAdmin && <button type="button" onClick={(event) => { event.stopPropagation(); onPermanentlyDelete(asset) }}>Delete permanently</button>}
         </>
       ) : activeSection === 'collection' ? (
-        canManageWorkspace && <button type="button" onClick={(event) => { event.stopPropagation(); onRemoveFromCollection(asset) }}>Remove from collection</button>
+        <>
+          {canManageWorkspace && <button type="button" onClick={(event) => { event.stopPropagation(); onRemoveFromCollection(asset) }}>Remove from collection</button>}
+          <button
+            type="button"
+            disabled={!canManageWorkspace}
+            title={canManageWorkspace ? 'Move this asset to Trash' : 'Editor or admin access is required to delete assets'}
+            onClick={(event) => { event.stopPropagation(); onDelete(asset) }}
+          >
+            {canManageWorkspace ? 'Delete' : 'Delete (editor/admin only)'}
+          </button>
+        </>
       ) : (
-        canManageWorkspace && <>
-          <button type="button" onClick={(event) => { event.stopPropagation(); onAddToCollection(asset) }}>Add to collection</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); onDelete(asset) }}>Move to trash</button>
+        <>
+          {canManageWorkspace && <button type="button" onClick={(event) => { event.stopPropagation(); onAddToCollection(asset) }}>Add to collection</button>}
+          <button
+            type="button"
+            disabled={!canManageWorkspace}
+            title={canManageWorkspace ? 'Move this asset to Trash' : 'Editor or admin access is required to delete assets'}
+            onClick={(event) => { event.stopPropagation(); onDelete(asset) }}
+          >
+            {canManageWorkspace ? 'Delete' : 'Delete (editor/admin only)'}
+          </button>
         </>
       )}
     </div>
@@ -50,7 +67,7 @@ export default function AssetCard({
 
   return (
     <article
-      className={`asset-card ${isSelected ? 'selected' : ''}`}
+      className={`asset-card ${isSelected ? 'selected' : ''} ${isMenuOpen ? 'menu-open' : ''}`}
       onClick={(event) => {
         if (!event.target.closest('button')) onOpenPreview(asset)
       }}
