@@ -1,8 +1,17 @@
+import hashlib
 import uuid
 from pathlib import Path
 
 from django.conf import settings
 from django.db import models
+
+
+def compute_file_hash(file_obj):
+    digest = hashlib.sha256()
+    for chunk in file_obj.chunks():
+        digest.update(chunk)
+    file_obj.seek(0)
+    return digest.hexdigest()
 
 
 def asset_upload_path(instance, filename):
@@ -20,6 +29,7 @@ class Asset(models.Model):
     content_type = models.CharField(max_length=150)
     size_bytes = models.PositiveBigIntegerField(default=0)
     metadata = models.JSONField(default=dict, blank=True)
+    file_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
     tags = models.JSONField(default=list, blank=True)
     description = models.TextField(blank=True)
     alt_text = models.CharField(max_length=500, blank=True)

@@ -25,10 +25,10 @@ class AssetSerializer(serializers.ModelSerializer):
         model = Asset
         fields = (
             "id", "tenant", "uploaded_by", "name", "object_key", "content_type",
-            "size_bytes", "metadata", "tags", "description", "alt_text", "creator", "campaign",
+            "size_bytes", "file_hash", "metadata", "tags", "description", "alt_text", "creator", "campaign",
             "license", "custom_fields", "created_at", "updated_at", "deleted_at", "file_url", "thumbnail_url",
         )
-        read_only_fields = ("id", "tenant", "uploaded_by", "created_at", "updated_at", "deleted_at", "file_url", "thumbnail_url")
+        read_only_fields = ("id", "tenant", "uploaded_by", "file_hash", "created_at", "updated_at", "deleted_at", "file_url", "thumbnail_url")
 
     def validate_tags(self, tags):
         if len(tags) > 20:

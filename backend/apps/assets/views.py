@@ -18,7 +18,7 @@ from apps.tenants.models import Membership, Tenant
 from apps.tenants.activity import record_activity
 from apps.tenants.permissions import WorkspaceRolePermission
 
-from .models import Asset
+from .models import Asset, compute_file_hash
 from .serializers import AssetSerializer, AssetUploadSerializer
 
 
@@ -112,6 +112,13 @@ class AssetViewSet(viewsets.ModelViewSet):
 
         extension = Path(uploaded_file.name).suffix.lower()
         content_type = mimetypes.guess_type(uploaded_file.name)[0] or 'application/octet-stream'
+        file_hash = compute_file_hash(uploaded_file)
+        duplicate_asset = Asset.objects.filter(tenant=tenant, file_hash=file_hash).exclude(deleted_at__isnull=False).first()
+        if duplicate_asset is not None:
+            duplicate_message = f'This file already exists in this workspace as “{duplicate_asset.name}”.'
+            record_activity(tenant, request.user, duplicate_message, event_type='error')
+            return Response({'detail': duplicate_message}, status=status.HTTP_409_CONFLICT)
+
         asset = Asset(
             tenant=tenant,
             uploaded_by=request.user,
@@ -119,6 +126,7 @@ class AssetViewSet(viewsets.ModelViewSet):
             object_key=f'pending/{uuid.uuid4().hex}',
             content_type=content_type,
             size_bytes=uploaded_file.size,
+            file_hash=file_hash,
             metadata={'original_filename': Path(uploaded_file.name).name, 'type': extension.lstrip('.').upper()},
             tags=upload_serializer.validated_data['tags'],
             description=upload_serializer.validated_data.get('description', ''),

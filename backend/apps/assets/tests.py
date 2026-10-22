@@ -11,6 +11,8 @@ from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from apps.tenants.models import ActivityEvent
+
 
 class AssetAccessTests(TestCase):
     def test_multipart_upload_is_stored_and_served_only_to_workspace_members(self):
@@ -67,6 +69,33 @@ class AssetAccessTests(TestCase):
                 outsider_client = APIClient()
                 outsider_client.force_authenticate(user=outsider)
                 self.assertEqual(outsider_client.get(asset_data["file_url"]).status_code, 404)
+
+    def test_upload_rejects_duplicate_file_content_within_workspace(self):
+        user = get_user_model().objects.create_user(
+            username=f"duplicate-upload-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        file_content = b"duplicate asset bytes"
+
+        first_response = client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("original.png", file_content, content_type="image/png")},
+            format="multipart",
+        )
+        self.assertEqual(first_response.status_code, 201, first_response.content)
+
+        second_response = client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("copy.png", file_content, content_type="image/png")},
+            format="multipart",
+        )
+
+        self.assertEqual(second_response.status_code, 409, second_response.content)
+        self.assertIn("already exists", second_response.json()["detail"])
+        activity = ActivityEvent.objects.filter(tenant=user.active_tenant, event_type="error").order_by('-created_at').first()
+        self.assertIsNotNone(activity)
+        self.assertIn("already exists", activity.message)
 
     @override_settings(DAM_MAX_UPLOAD_SIZE=3)
     def test_upload_rejects_files_over_configured_size_limit(self):
