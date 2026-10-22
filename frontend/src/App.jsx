@@ -1136,9 +1136,18 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     const completed = results.filter((result) => result.ok).length
     const failures = results.length - completed
+    const failedResults = results.filter((result) => !result.ok)
     setIsUploadingFiles(false)
     setPendingUploadFiles([])
-    showNotice(failures ? `${completed} uploaded, ${failures} failed.` : `${completed} file${completed === 1 ? '' : 's'} uploaded.`)
+
+    if (failures) {
+      const firstFailure = failedResults[0]?.error || 'Upload failed.'
+      const failureMessage = failures === 1 ? firstFailure : `${failures} uploads failed. ${firstFailure}`
+      showNotice(failureMessage)
+      return
+    }
+
+    showNotice(`${completed} file${completed === 1 ? '' : 's'} uploaded.`)
   }
 
   const submitUploadMetadata = async (event) => {
