@@ -152,3 +152,57 @@ class AssetUploadSerializer(serializers.Serializer):
                     normalized_fields[clean_key] = clean_value
                 attrs[field_name] = normalized_fields
         return attrs
+
+
+class BulkAssetMetadataSerializer(serializers.Serializer):
+    asset_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+        max_length=100,
+    )
+    metadata = serializers.DictField(required=False, default=dict)
+    per_asset_metadata = serializers.DictField(
+        child=serializers.DictField(),
+        required=False,
+        default=dict,
+    )
+
+    def validate_asset_ids(self, asset_ids):
+        if len(set(asset_ids)) != len(asset_ids):
+            raise serializers.ValidationError("Asset IDs must be unique.")
+        return asset_ids
+
+    def validate_metadata(self, metadata):
+        allowed_fields = {"tags", "description", "alt_text", "creator", "campaign", "license", "custom_fields"}
+        unsupported_fields = set(metadata) - allowed_fields
+        if unsupported_fields:
+            raise serializers.ValidationError(
+                f"Unsupported metadata fields: {', '.join(sorted(unsupported_fields))}."
+            )
+        metadata_serializer = AssetSerializer(data=metadata, partial=True)
+        metadata_serializer.is_valid(raise_exception=True)
+        return metadata_serializer.validated_data
+
+    def validate(self, attrs):
+        from uuid import UUID
+
+        allowed_ids = {str(asset_id) for asset_id in attrs["asset_ids"]}
+        normalized_overrides = {}
+        for asset_id, metadata in attrs.get("per_asset_metadata", {}).items():
+            try:
+                normalized_id = str(UUID(asset_id))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise serializers.ValidationError({"per_asset_metadata": f"Invalid asset ID: {asset_id}."}) from exc
+            if normalized_id not in allowed_ids:
+                raise serializers.ValidationError({"per_asset_metadata": "Overrides must belong to selected assets."})
+            if not metadata:
+                raise serializers.ValidationError({"per_asset_metadata": f"Provide metadata for asset {asset_id}."})
+            metadata_serializer = AssetSerializer(data=metadata, partial=True)
+            metadata_serializer.is_valid(raise_exception=True)
+            normalized_overrides[normalized_id] = metadata_serializer.validated_data
+
+        if not attrs.get("metadata") and not normalized_overrides:
+            raise serializers.ValidationError("Select at least one metadata field to update.")
+
+        attrs["per_asset_metadata"] = normalized_overrides
+        return attrs

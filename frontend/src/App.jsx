@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkAssetMetadataModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -354,6 +354,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [metadataAsset, setMetadataAsset] = useState(null)
   const [metadataForm, setMetadataForm] = useState(metadataFormFromAsset({}))
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
+  const [bulkMetadataOpen, setBulkMetadataOpen] = useState(false)
+  const [bulkMetadataForm, setBulkMetadataForm] = useState(emptyMetadataForm)
+  const [bulkMetadataFields, setBulkMetadataFields] = useState([])
+  const [bulkTagsByAsset, setBulkTagsByAsset] = useState({})
+  const [isSavingBulkMetadata, setIsSavingBulkMetadata] = useState(false)
   const previewObjectUrl = useRef(null)
   const previewRequest = useRef(0)
   const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
@@ -931,6 +936,80 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     showNotice(allStarred ? 'Selected assets removed from favorites.' : 'Selected assets added to favorites.')
   }
 
+  const openBulkMetadataEditor = () => {
+    setBulkMetadataForm(emptyMetadataForm)
+    setBulkMetadataFields([])
+    setBulkTagsByAsset(Object.fromEntries(selectedAssets.map((asset) => [asset.id, (asset.tags || []).join(', ')])))
+    setBulkMetadataOpen(true)
+  }
+
+  const saveBulkMetadata = async (event) => {
+    event.preventDefault()
+    if (!selectedAssets.length || !bulkMetadataFields.length) {
+      showNotice('Select at least one metadata field to update.')
+      return
+    }
+
+    let parsedMetadata
+    try {
+      parsedMetadata = parseMetadataForm(bulkMetadataForm)
+    } catch (error) {
+      showNotice(error.message)
+      return
+    }
+
+    const selectedIds = selectedAssets.map((asset) => asset.id)
+    if (selectedIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id || ''))) {
+      showNotice('Bulk metadata editing is available for saved assets only.')
+      return
+    }
+
+    const metadata = Object.fromEntries(
+      bulkMetadataFields
+        .filter((field) => field !== 'tags')
+        .map((field) => [field, parsedMetadata[field]]),
+    )
+    const perAssetMetadata = bulkMetadataFields.includes('tags')
+      ? Object.fromEntries(selectedAssets.map((asset) => {
+        const assetTags = parseMetadataForm({ ...emptyMetadataForm, tags: bulkTagsByAsset[asset.id] ?? '' }).tags
+        return [asset.id, { tags: assetTags }]
+      }))
+      : {}
+    setIsSavingBulkMetadata(true)
+    try {
+      const response = await apiRequest('/api/assets/bulk-metadata/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: selectedIds, metadata, per_asset_metadata: perAssetMetadata }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const detail = data?.detail || Object.values(data || {}).flat()?.[0]
+        throw new Error(detail || 'Unable to update selected asset metadata.')
+      }
+
+      const updatedById = new Map((data.assets || []).map((asset) => [asset.id, mapApiAsset(asset)]))
+      const mergeUpdatedAsset = (asset) => {
+        const updatedAsset = updatedById.get(asset.id)
+        return updatedAsset ? { ...asset, ...updatedAsset, image: asset.image || updatedAsset.image } : asset
+      }
+      setAssets((current) => current.map(mergeUpdatedAsset))
+      setTrashAssets((current) => current.map(mergeUpdatedAsset))
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).map(mergeUpdatedAsset),
+      })))
+      setPreviewAsset((current) => current ? mergeUpdatedAsset(current) : current)
+      setSelected([])
+      setBulkMetadataOpen(false)
+      showNotice(`Metadata updated for ${data.updated} assets.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to update selected asset metadata.')
+    } finally {
+      setIsSavingBulkMetadata(false)
+    }
+  }
+
   const addSelectedAssetsToCollection = async (collection) => {
     const selectedIds = selectedAssets.filter((asset) => /^[0-9a-f-]{36}$/i.test(asset.id || '')).map((asset) => asset.id)
     if (!selectedIds.length) {
@@ -1395,6 +1474,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             canManageWorkspace={canManageWorkspace}
             isAdmin={activeWorkspaceRole === 'admin'}
             allStarred={selectedAssets.length > 0 && selectedAssets.every((asset) => starred.includes(asset.name))}
+            onEditMetadata={openBulkMetadataEditor}
             onAddToCollection={() => setAssetToCollect({ bulkAssets: selectedAssets })}
             onToggleFavorites={toggleSelectedFavorites}
             onMoveToTrash={() => performBulkAssetAction('moveToTrash')}
@@ -1439,6 +1519,20 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       </main>
 
       <ToastNotification message={notice} onDismiss={() => setNotice('')} />
+      {bulkMetadataOpen && <BulkAssetMetadataModal
+        form={bulkMetadataForm}
+        enabledFields={bulkMetadataFields}
+        assets={selectedAssets}
+        tagsByAsset={bulkTagsByAsset}
+        isSaving={isSavingBulkMetadata}
+        onFieldToggle={(field) => setBulkMetadataFields((current) => current.includes(field)
+          ? current.filter((item) => item !== field)
+          : [...current, field])}
+        onTagChange={(assetId, value) => setBulkTagsByAsset((current) => ({ ...current, [assetId]: value }))}
+        onChange={setBulkMetadataForm}
+        onClose={() => { if (!isSavingBulkMetadata) setBulkMetadataOpen(false) }}
+        onSubmit={saveBulkMetadata}
+      />}
       {isCreateCollectionOpen && (
         <div className="modal-backdrop" onClick={() => setIsCreateCollectionOpen(false)}>
           <form className="asset-modal collection-modal" onSubmit={createCollection} onClick={(event) => event.stopPropagation()}>

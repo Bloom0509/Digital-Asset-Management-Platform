@@ -222,6 +222,125 @@ class AssetAccessTests(TestCase):
         self.assertEqual(update_response.json()["description"], "Final approved artwork.")
         self.assertEqual(update_response.json()["creator"], "Design team")
 
+    def test_bulk_metadata_updates_selected_assets_and_records_activity(self):
+        user = get_user_model().objects.create_user(
+            username=f"bulk-metadata-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        asset_ids = []
+        for index in range(2):
+            response = client.post(
+                "/api/assets/",
+                {
+                    "name": f"Bulk asset {index}",
+                    "object_key": f"bulk/{uuid.uuid4().hex}.png",
+                    "content_type": "image/png",
+                    "tags": ["before"],
+                    "creator": "Original creator",
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            asset_ids.append(response.json()["id"])
+
+        response = client.post(
+            "/api/assets/bulk-metadata/",
+            {
+                "asset_ids": asset_ids,
+                "metadata": {"tags": ["summer", "launch"], "campaign": "Summer 2026"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["updated"], 2)
+        self.assertEqual(len(response.json()["assets"]), 2)
+        self.assertTrue(all(asset["tags"] == ["summer", "launch"] for asset in response.json()["assets"]))
+        self.assertTrue(all(asset["campaign"] == "Summer 2026" for asset in response.json()["assets"]))
+        self.assertTrue(all(asset["creator"] == "Original creator" for asset in response.json()["assets"]))
+        self.assertTrue(
+            ActivityEvent.objects.filter(
+                tenant=user.active_tenant,
+                message="Updated metadata for 2 assets.",
+            ).exists()
+        )
+
+    def test_bulk_metadata_supports_different_tags_per_asset(self):
+        user = get_user_model().objects.create_user(
+            username=f"bulk-tags-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        asset_ids = []
+        initial_tags = [["old-one"], ["old-two"]]
+        for index, tags in enumerate(initial_tags):
+            response = client.post(
+                "/api/assets/",
+                {
+                    "name": f"Tag asset {index}",
+                    "object_key": f"bulk-tags/{uuid.uuid4().hex}.png",
+                    "content_type": "image/png",
+                    "tags": tags,
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            asset_ids.append(response.json()["id"])
+
+        response = client.post(
+            "/api/assets/bulk-metadata/",
+            {
+                "asset_ids": asset_ids,
+                "metadata": {"campaign": "Spring launch"},
+                "per_asset_metadata": {
+                    asset_ids[0]: {"tags": ["new-one", "featured"]},
+                    asset_ids[1]: {"tags": ["new-two"]},
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        assets_by_id = {asset["id"]: asset for asset in response.json()["assets"]}
+        self.assertEqual(assets_by_id[asset_ids[0]]["tags"], ["new-one", "featured"])
+        self.assertEqual(assets_by_id[asset_ids[1]]["tags"], ["new-two"])
+        self.assertTrue(all(asset["campaign"] == "Spring launch" for asset in assets_by_id.values()))
+
+    def test_bulk_metadata_rejects_assets_outside_active_workspace(self):
+        user = get_user_model().objects.create_user(
+            username=f"bulk-metadata-owner-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        outsider = get_user_model().objects.create_user(
+            username=f"bulk-metadata-outsider-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        owner_client = APIClient()
+        owner_client.force_authenticate(user=user)
+        asset_response = owner_client.post(
+            "/api/assets/",
+            {
+                "name": "Private asset",
+                "object_key": f"private/{uuid.uuid4().hex}.png",
+                "content_type": "image/png",
+            },
+            format="json",
+        )
+        self.assertEqual(asset_response.status_code, 201, asset_response.content)
+
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        response = outsider_client.post(
+            "/api/assets/bulk-metadata/",
+            {"asset_ids": [asset_response.json()["id"]], "metadata": {"campaign": "Unauthorized"}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            owner_client.get(f"/api/assets/{asset_response.json()['id']}/").json()["campaign"],
+            "",
+        )
+
     def test_asset_metadata_rejects_too_many_tags(self):
         user = get_user_model().objects.create_user(
             username=f"metadata-limit-{uuid.uuid4().hex[:8]}", password="StrongPass123"

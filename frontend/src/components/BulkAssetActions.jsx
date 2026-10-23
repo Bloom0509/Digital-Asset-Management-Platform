@@ -4,6 +4,7 @@ export default function BulkAssetActions({
   canManageWorkspace,
   isAdmin,
   allStarred,
+  onEditMetadata,
   onAddToCollection,
   onToggleFavorites,
   onMoveToTrash,
@@ -18,6 +19,7 @@ export default function BulkAssetActions({
       <strong>{count} selected</strong>
       {!isTrash && <button type="button" onClick={onToggleFavorites}>{allStarred ? 'Remove favorites' : 'Add to favorites'}</button>}
       {canManageWorkspace && !isTrash && <>
+        <button type="button" onClick={onEditMetadata}>Edit metadata</button>
         <button type="button" onClick={onAddToCollection}>Add to collection</button>
         <button className="bulk-danger" type="button" onClick={onMoveToTrash}>Move to trash</button>
       </>}

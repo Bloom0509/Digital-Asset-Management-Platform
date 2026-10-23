@@ -4,6 +4,7 @@ from io import BytesIO
 from pathlib import Path
 
 from django.http import FileResponse, HttpResponse
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.authentication import SessionAuthentication
@@ -19,7 +20,7 @@ from apps.tenants.activity import record_activity
 from apps.tenants.permissions import WorkspaceRolePermission
 
 from .models import Asset, compute_file_hash
-from .serializers import AssetSerializer, AssetUploadSerializer
+from .serializers import AssetSerializer, AssetUploadSerializer, BulkAssetMetadataSerializer
 
 
 class OptionalJWTAuthentication(JWTAuthentication):
@@ -95,6 +96,46 @@ class AssetViewSet(viewsets.ModelViewSet):
             asset.file.delete(save=False)
         asset.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['post'], url_path='bulk-metadata')
+    def bulk_metadata(self, request):
+        bulk_serializer = BulkAssetMetadataSerializer(data=request.data)
+        bulk_serializer.is_valid(raise_exception=True)
+        asset_ids = bulk_serializer.validated_data['asset_ids']
+        metadata = bulk_serializer.validated_data['metadata']
+        per_asset_metadata = bulk_serializer.validated_data['per_asset_metadata']
+        assets = list(self.get_queryset().filter(pk__in=asset_ids))
+        if len(assets) != len(asset_ids):
+            return Response(
+                {'detail': 'One or more selected assets are unavailable in this workspace.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        with transaction.atomic():
+            updated_assets = []
+            for asset in assets:
+                asset_metadata = {
+                    **metadata,
+                    **per_asset_metadata.get(str(asset.pk), {}),
+                }
+                serializer = AssetSerializer(
+                    asset,
+                    data=asset_metadata,
+                    partial=True,
+                    context=self.get_serializer_context(),
+                )
+                serializer.is_valid(raise_exception=True)
+                updated_assets.append(serializer.save())
+            record_activity(
+                request.user.active_tenant,
+                request.user,
+                f'Updated metadata for {len(updated_assets)} assets.',
+            )
+
+        return Response({
+            'updated': len(updated_assets),
+            'assets': AssetSerializer(updated_assets, many=True, context=self.get_serializer_context()).data,
+        })
 
     @action(
         detail=False,

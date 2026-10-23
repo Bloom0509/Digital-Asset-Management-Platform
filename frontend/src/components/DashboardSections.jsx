@@ -213,3 +213,75 @@ export function AssetMetadataModal({ form, isSaving, onChange, onClose, onSubmit
     </div>
   )
 }
+
+export function BulkAssetMetadataModal({ form, enabledFields, assets, tagsByAsset, isSaving, onFieldToggle, onTagChange, onChange, onClose, onSubmit }) {
+  const updateField = (event) => onChange((current) => ({ ...current, [event.target.name]: event.target.value }))
+  const fields = [
+    { name: 'description', label: 'Description' },
+    { name: 'alt_text', label: 'Alt text' },
+    { name: 'creator', label: 'Creator / credit' },
+    { name: 'campaign', label: 'Campaign' },
+    { name: 'license', label: 'License / usage rights' },
+    { name: 'custom_fields', label: 'Custom fields', hint: 'One “name: value” field per line.' },
+  ]
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="asset-modal metadata-modal bulk-metadata-modal" onSubmit={onSubmit} onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" type="button" onClick={onClose} aria-label="Close bulk metadata editor">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">BULK EDIT</p>
+          <h3>Edit metadata for {assets.length} assets</h3>
+          <p>Tags can be changed separately for each asset. Other checked fields will be applied to all selected assets.</p>
+        </div>
+        <div className="bulk-metadata-fields">
+          <div className="bulk-metadata-field">
+            <label className="bulk-metadata-toggle">
+              <input type="checkbox" checked={enabledFields.includes('tags')} onChange={() => onFieldToggle('tags')} />
+              <span>Update tags individually</span>
+            </label>
+            {enabledFields.includes('tags') && (
+              <div className="bulk-tag-asset-list">
+                {assets.map((asset) => (
+                  <label className="bulk-tag-asset-row" key={asset.id}>
+                    <span className="bulk-tag-asset-name" title={asset.name}>{asset.name}</span>
+                    <small>Current: {(asset.tags || []).join(', ') || 'No tags'}</small>
+                    <input
+                      value={tagsByAsset[asset.id] ?? ''}
+                      onChange={(event) => onTagChange(asset.id, event.target.value)}
+                      placeholder="Enter new tags, separated by commas"
+                      aria-label={`New tags for ${asset.name}`}
+                    />
+                  </label>
+                ))}
+                <small>Enter up to 20 tags per asset. Leave the input empty to remove all tags for that asset.</small>
+              </div>
+            )}
+          </div>
+          {fields.map(({ name, label, hint }) => (
+            <div className="bulk-metadata-field" key={name}>
+              <label className="bulk-metadata-toggle">
+                <input type="checkbox" checked={enabledFields.includes(name)} onChange={() => onFieldToggle(name)} />
+                <span>{label}</span>
+              </label>
+              {enabledFields.includes(name) && (
+                name === 'description' ? (
+                  <textarea name={name} value={form[name]} onChange={updateField} maxLength={5000} rows={2} placeholder="Description for selected assets" />
+                ) : name === 'custom_fields' ? (
+                  <textarea name={name} value={form[name]} onChange={updateField} rows={2} placeholder={'Brand: Acme\nRegion: North America'} />
+                ) : (
+                  <input name={name} value={form[name]} onChange={updateField} maxLength={name === 'tags' ? undefined : name === 'alt_text' ? 500 : 150} placeholder={name === 'tags' ? 'brand, campaign, approved' : `Set ${label.toLowerCase()}`} />
+                )
+              )}
+              {enabledFields.includes(name) && hint && <small>{hint}</small>}
+            </div>
+          ))}
+        </div>
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
+          <button type="submit" className="upload create-submit" disabled={isSaving || !enabledFields.length}>{isSaving ? 'Saving…' : 'Apply to selected'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
