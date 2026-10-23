@@ -2,9 +2,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_DB: dam
-      POSTGRES_USER: dam
-      POSTGRES_PASSWORD: dam
+      POSTGRES_DB: ${POSTGRES_DB:-DigitalAssetManagement}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD or pass --env-file backend/.env}
     ports:
       - "5432:5432"
     volumes:
