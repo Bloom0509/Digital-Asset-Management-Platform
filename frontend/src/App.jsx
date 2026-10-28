@@ -359,6 +359,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [bulkMetadataFields, setBulkMetadataFields] = useState([])
   const [bulkTagsByAsset, setBulkTagsByAsset] = useState({})
   const [isSavingBulkMetadata, setIsSavingBulkMetadata] = useState(false)
+  const [isMemberManagerOpen, setIsMemberManagerOpen] = useState(false)
+  const [workspaceMembers, setWorkspaceMembers] = useState([])
+  const [memberIdentifier, setMemberIdentifier] = useState('')
+  const [newMemberRole, setNewMemberRole] = useState('viewer')
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false)
+  const [isSavingMember, setIsSavingMember] = useState(false)
   const previewObjectUrl = useRef(null)
   const previewRequest = useRef(0)
   const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
@@ -800,6 +806,73 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const showNotice = (message) => {
     setNotice(message)
     setMenu(null)
+  }
+
+  const openMemberManager = async () => {
+    setIsMemberManagerOpen(true)
+    setIsLoadingMembers(true)
+    try {
+      const response = await apiRequest('/api/tenants/members/')
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to load workspace members.')
+      setWorkspaceMembers(Array.isArray(data) ? data : [])
+    } catch (error) {
+      showNotice(error.message || 'Unable to load workspace members.')
+    } finally {
+      setIsLoadingMembers(false)
+    }
+  }
+
+  const addWorkspaceMember = async (event) => {
+    event.preventDefault()
+    const identifier = memberIdentifier.trim()
+    if (!identifier) return
+    setIsSavingMember(true)
+    try {
+      const response = await apiRequest('/api/tenants/members/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier, role: newMemberRole }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || Object.values(data || {}).flat()?.[0] || 'Unable to add member.')
+      setWorkspaceMembers((current) => [...current, data].sort((a, b) => a.username.localeCompare(b.username)))
+      setMemberIdentifier('')
+      showNotice(`${data.username} added to the workspace.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to add member.')
+    } finally {
+      setIsSavingMember(false)
+    }
+  }
+
+  const changeWorkspaceMemberRole = async (member, role) => {
+    try {
+      const response = await apiRequest(`/api/tenants/members/${member.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to update member role.')
+      setWorkspaceMembers((current) => current.map((item) => item.id === member.id ? data : item))
+      showNotice(`${member.username} is now a ${role}.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to update member role.')
+    }
+  }
+
+  const removeWorkspaceMember = async (member) => {
+    if (!window.confirm(`Remove ${member.username} from this workspace?`)) return
+    try {
+      const response = await apiRequest(`/api/tenants/members/${member.id}/`, { method: 'DELETE' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to remove member.')
+      setWorkspaceMembers((current) => current.filter((item) => item.id !== member.id))
+      showNotice(`${member.username} removed from the workspace.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to remove member.')
+    }
   }
 
   const handleCreateWorkspace = async () => {
@@ -1328,6 +1401,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           </select>
           <small>{activeWorkspaceRole}</small>
           <button className="workspace-create" type="button" onClick={handleCreateWorkspace}>+ New workspace</button>
+          {currentWorkspace?.is_owner && <button className="workspace-create" type="button" onClick={openMemberManager}>Manage members</button>}
         </div>
         <nav>
           <p className="nav-label">Workspace</p>
@@ -1519,6 +1593,51 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       </main>
 
       <ToastNotification message={notice} onDismiss={() => setNotice('')} />
+      {isMemberManagerOpen && <div className="modal-backdrop" onClick={() => setIsMemberManagerOpen(false)}>
+        <section className="asset-modal member-manager-modal" onClick={(event) => event.stopPropagation()} aria-labelledby="member-manager-title">
+          <button className="modal-close" type="button" onClick={() => setIsMemberManagerOpen(false)} aria-label="Close member manager">×</button>
+          <div className="asset-modal-copy">
+            <p className="eyebrow">WORKSPACE ADMIN</p>
+            <h3 id="member-manager-title">Manage members</h3>
+            <p>Add existing accounts, adjust their access, or remove them from this workspace.</p>
+          </div>
+          <form className="member-add-form" onSubmit={addWorkspaceMember}>
+            <label>
+              <span>Username or email</span>
+              <input value={memberIdentifier} onChange={(event) => setMemberIdentifier(event.target.value)} placeholder="username or name@example.com" required />
+            </label>
+            <label>
+              <span>Workspace role</span>
+              <select value={newMemberRole} onChange={(event) => setNewMemberRole(event.target.value)}>
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <button type="submit" className="upload" disabled={isSavingMember}>{isSavingMember ? 'Adding…' : 'Add member'}</button>
+          </form>
+          <div className="member-list" aria-live="polite">
+            {isLoadingMembers ? <p className="member-list-state">Loading members…</p> : workspaceMembers.length ? workspaceMembers.map((member) => (
+              <article className="member-row" key={member.id}>
+                <div className="member-identity">
+                  <strong>{member.username}</strong>
+                  <small>{member.email || 'No email address'}</small>
+                </div>
+                {member.is_owner ? <span className="member-admin-badge">Owner · Admin</span> : <select
+                  aria-label={`Role for ${member.username}`}
+                  value={member.role}
+                  onChange={(event) => changeWorkspaceMemberRole(member, event.target.value)}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                  <option value="admin">Admin</option>
+                </select>}
+                {!member.is_owner && <button type="button" className="member-remove" onClick={() => removeWorkspaceMember(member)} aria-label={`Remove ${member.username}`}>Remove</button>}
+              </article>
+            )) : <p className="member-list-state">No workspace members found.</p>}
+          </div>
+        </section>
+      </div>}
       {bulkMetadataOpen && <BulkAssetMetadataModal
         form={bulkMetadataForm}
         enabledFields={bulkMetadataFields}
@@ -1833,7 +1952,7 @@ function App() {
       const detail = data?.slug?.[0] || data?.name?.[0] || data?.detail || 'Unable to create workspace.'
       throw new Error(detail)
     }
-    const workspace = { ...data, role: 'admin' }
+    const workspace = { ...data, role: 'admin', is_owner: true }
     setWorkspaces((current) => [...current.filter((item) => item.id !== workspace.id), workspace])
     setCurrentWorkspace(workspace)
     navigate(`/workspaces/${workspace.id}/assets`)

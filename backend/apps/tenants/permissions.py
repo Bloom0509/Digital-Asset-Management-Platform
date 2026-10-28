@@ -45,3 +45,22 @@ class WorkspaceRolePermission(BasePermission):
         if action == "permanent_delete":
             return role == Membership.Role.ADMIN
         return role in (Membership.Role.ADMIN, Membership.Role.EDITOR)
+
+
+class WorkspaceAdminPermission(BasePermission):
+    """Allow access only to admins of the authenticated user's active workspace."""
+
+    message = "Only workspace admins can manage members."
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        membership = Membership.objects.filter(
+            tenant_id=getattr(request.user, "active_tenant_id", None),
+            tenant__is_active=True,
+            user_id=request.user.pk,
+        ).first()
+        if membership is None or membership.tenant.owner_id != request.user.pk:
+            return False
+        request.workspace_membership = membership
+        return True

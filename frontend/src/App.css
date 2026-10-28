@@ -642,6 +642,143 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   cursor: pointer;
 }
 
+.member-manager-modal {
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.member-manager-modal .asset-modal-copy {
+  margin-bottom: 20px;
+}
+
+.member-add-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  align-items: end;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--toolbar-border);
+}
+
+.member-add-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.member-add-form input,
+.member-add-form select,
+.member-row select {
+  min-width: 0;
+  height: 38px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  background: var(--input);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.member-add-form button {
+  height: 38px;
+  white-space: nowrap;
+}
+
+.member-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.member-identity {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.member-identity strong,
+.member-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-identity strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.member-identity small,
+.member-list-state {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.member-admin-badge {
+  color: var(--green-deep);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.member-remove {
+  padding: 8px 10px;
+  border: 1px solid #e4b8ad;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a3428;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.member-remove:hover {
+  background: #fff3ef;
+}
+
+.member-list-state {
+  margin: 0;
+  padding: 15px 4px;
+}
+
+@media (max-width: 620px) {
+  .member-add-form {
+    grid-template-columns: minmax(0, 1fr) 110px;
+  }
+
+  .member-add-form button {
+    grid-column: 1 / -1;
+  }
+
+  .member-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .member-row select,
+  .member-admin-badge {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .member-remove {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
 #spacer {
   height: 88px;
   border-top: 1px solid var(--border);

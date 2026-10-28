@@ -31,3 +31,18 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 
 class TenantSwitchSerializer(serializers.Serializer):
     workspace_id = serializers.UUIDField()
+
+
+class WorkspaceMemberCreateSerializer(serializers.Serializer):
+    identifier = serializers.CharField(max_length=254)
+    role = serializers.ChoiceField(choices=Membership.Role.choices)
+
+    def validate_identifier(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a username or email address.")
+        return value
+
+
+class WorkspaceMemberRoleSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=Membership.Role.choices)

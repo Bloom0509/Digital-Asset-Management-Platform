@@ -112,3 +112,147 @@ class WorkspaceAccessTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.owner.refresh_from_db()
         self.assertEqual(self.owner.active_tenant_id, second_workspace.pk)
+
+    def test_admin_can_list_add_update_and_remove_workspace_members(self):
+        member = get_user_model().objects.create_user(
+            username=f"member-{uuid.uuid4().hex[:8]}",
+            email=f"member-{uuid.uuid4().hex[:8]}@example.com",
+            password="StrongPass123",
+        )
+
+        listing = self.owner_client.get("/api/tenants/members/")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(len(listing.json()), 1)
+        self.assertEqual(listing.json()[0]["role"], Membership.Role.ADMIN)
+
+        created = self.owner_client.post(
+            "/api/tenants/members/",
+            {"identifier": member.username, "role": Membership.Role.VIEWER},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["role"], Membership.Role.VIEWER)
+
+        updated = self.owner_client.patch(
+            f"/api/tenants/members/{created.json()['id']}/",
+            {"role": Membership.Role.EDITOR},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.assertEqual(updated.json()["role"], Membership.Role.EDITOR)
+
+        removed = self.owner_client.delete(f"/api/tenants/members/{created.json()['id']}/")
+        self.assertEqual(removed.status_code, 204)
+        self.assertFalse(Membership.objects.filter(tenant=self.tenant, user=member).exists())
+
+    def test_non_admin_cannot_manage_workspace_members(self):
+        editor = get_user_model().objects.create_user(
+            username=f"member-editor-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        Membership.objects.create(tenant=self.tenant, user=editor, role=Membership.Role.EDITOR)
+        editor.active_tenant = self.tenant
+        editor.save(update_fields=["active_tenant"])
+        client = APIClient()
+        client.force_authenticate(user=editor)
+
+        self.assertEqual(client.get("/api/tenants/members/").status_code, 403)
+        self.assertEqual(
+            client.post(
+                "/api/tenants/members/",
+                {"identifier": self.owner.username, "role": Membership.Role.VIEWER},
+                format="json",
+            ).status_code,
+            403,
+        )
+
+    def test_only_original_workspace_owner_can_manage_members(self):
+        later_admin = get_user_model().objects.create_user(
+            username=f"later-admin-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        Membership.objects.create(tenant=self.tenant, user=later_admin, role=Membership.Role.ADMIN)
+        later_admin.active_tenant = self.tenant
+        later_admin.save(update_fields=["active_tenant"])
+        client = APIClient()
+        client.force_authenticate(user=later_admin)
+
+        self.assertEqual(client.get("/api/tenants/members/").status_code, 403)
+        self.assertEqual(
+            client.post(
+                "/api/tenants/members/",
+                {"identifier": self.owner.username, "role": Membership.Role.VIEWER},
+                format="json",
+            ).status_code,
+            403,
+        )
+
+    def test_original_owner_can_promote_and_demote_other_admins(self):
+        member = get_user_model().objects.create_user(
+            username=f"promote-member-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        created = self.owner_client.post(
+            "/api/tenants/members/",
+            {"identifier": member.username, "role": Membership.Role.ADMIN},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertEqual(created.json()["role"], Membership.Role.ADMIN)
+        self.assertFalse(created.json()["is_owner"])
+
+        demoted = self.owner_client.patch(
+            f"/api/tenants/members/{created.json()['id']}/",
+            {"role": Membership.Role.EDITOR},
+            format="json",
+        )
+        self.assertEqual(demoted.status_code, 200, demoted.content)
+        self.assertEqual(demoted.json()["role"], Membership.Role.EDITOR)
+
+    def test_original_owner_membership_cannot_be_demoted_or_removed(self):
+        owner_membership = Membership.objects.get(tenant=self.tenant, user=self.owner)
+
+        demoted = self.owner_client.patch(
+            f"/api/tenants/members/{owner_membership.pk}/",
+            {"role": Membership.Role.VIEWER},
+            format="json",
+        )
+        removed = self.owner_client.delete(f"/api/tenants/members/{owner_membership.pk}/")
+
+        self.assertEqual(demoted.status_code, 400)
+        self.assertEqual(removed.status_code, 400)
+        owner_membership.refresh_from_db()
+        self.assertEqual(owner_membership.role, Membership.Role.ADMIN)
+
+    def test_admin_cannot_remove_the_last_workspace_admin(self):
+        admin_membership = Membership.objects.get(tenant=self.tenant, user=self.owner)
+
+        response = self.owner_client.delete(f"/api/tenants/members/{admin_membership.pk}/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Membership.objects.filter(pk=admin_membership.pk).exists())
+
+    def test_admin_cannot_remove_their_own_active_membership(self):
+        admin_membership = Membership.objects.get(tenant=self.tenant, user=self.owner)
+
+        response = self.owner_client.delete(f"/api/tenants/members/{admin_membership.pk}/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Membership.objects.filter(pk=admin_membership.pk).exists())
+
+    def test_admin_cannot_manage_members_in_another_workspace(self):
+        other_user = get_user_model().objects.create_user(
+            username=f"other-owner-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        other_tenant = Tenant.objects.create(
+            name="Other tenant",
+            slug=f"other-tenant-{uuid.uuid4().hex[:8]}",
+            owner=other_user,
+        )
+        other_membership = Membership.objects.create(
+            tenant=other_tenant,
+            user=other_user,
+            role=Membership.Role.ADMIN,
+        )
+
+        response = self.owner_client.delete(f"/api/tenants/members/{other_membership.pk}/")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Membership.objects.filter(pk=other_membership.pk).exists())
