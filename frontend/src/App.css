@@ -1120,6 +1120,52 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   margin-bottom: 22px;
 }
 
+.asset-edit-preview {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.asset-edit-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  max-height: 42vh;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #f3f6f4;
+}
+
+.asset-edit-image,
+.asset-edit-video {
+  max-height: 42vh;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  margin: 0;
+}
+
+.asset-edit-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text);
+}
+
+.asset-edit-meta strong {
+  font-size: 14px;
+}
+
+.asset-edit-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .metadata-modal .eyebrow {
   margin-bottom: 8px;
 }
@@ -1448,6 +1494,39 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   background: #fff;
 }
 
+.doodle-tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.doodle-tool {
+  padding: 7px 10px;
+  border: 1px solid #dfe6e1;
+  border-radius: 8px;
+  background: #f5f9f6;
+  color: #1e312e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.doodle-tool.secondary {
+  background: #f9faf9;
+}
+
+.doodle-tool.active {
+  border-color: #183d36;
+  background: #183d36;
+  color: #fff;
+}
+
+.doodle-tool:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .doodle-color-label,
 .doodle-size-label {
   display: flex !important;
@@ -1523,6 +1602,45 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 .drawing-idea.selected {
   border-color: #73927f;
   box-shadow: 0 0 0 2px rgba(115, 146, 127, 0.16);
+}
+
+.doodle-live-preview {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid #e6ece8;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.doodle-live-preview span {
+  color: #556661;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.doodle-live-preview img {
+  display: block;
+  width: 100%;
+  max-height: 140px;
+  object-fit: contain;
+  border: 1px solid #e5ebe7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.doodle-live-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 90px;
+  border: 1px dashed #dfe6e1;
+  border-radius: 8px;
+  background: #f9fbfa;
+  color: #73807d;
+  font-size: 11px;
 }
 
 @media (max-width: 620px) {

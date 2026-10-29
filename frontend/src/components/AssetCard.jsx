@@ -4,7 +4,7 @@ function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOp
       <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenPreview(asset) }}>Open preview</button>
       <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(asset) }}>Download</button>
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onRename(asset) }}>Rename</button>}
-      {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit metadata</button>}
+      {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit asset</button>}
       {activeSection === 'trash' ? (
         canManageWorkspace && <>
           <button type="button" onClick={(event) => { event.stopPropagation(); onRestore(asset) }}>Restore</button>

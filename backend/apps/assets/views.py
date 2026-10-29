@@ -3,6 +3,7 @@ import uuid
 from io import BytesIO
 from pathlib import Path
 
+from django.core.files.base import ContentFile
 from django.http import FileResponse, HttpResponse
 from django.db import transaction
 from django.utils import timezone
@@ -96,6 +97,63 @@ class AssetViewSet(viewsets.ModelViewSet):
             asset.file.delete(save=False)
         asset.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], url_path='duplicate')
+    def duplicate(self, request, pk=None):
+        asset = self.get_object()
+        metadata_payload = request.data.get('metadata', {}) if hasattr(request.data, 'get') else {}
+        if metadata_payload is None:
+            metadata_payload = {}
+        if not isinstance(metadata_payload, dict):
+            return Response({'detail': 'Metadata must be an object.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        metadata_serializer = AssetSerializer(data=metadata_payload, partial=True)
+        metadata_serializer.is_valid(raise_exception=True)
+
+        asset_fields = {
+            'tags': getattr(asset, 'tags', []),
+            'description': getattr(asset, 'description', ''),
+            'alt_text': getattr(asset, 'alt_text', ''),
+            'creator': getattr(asset, 'creator', ''),
+            'campaign': getattr(asset, 'campaign', ''),
+            'license': getattr(asset, 'license', ''),
+            'custom_fields': getattr(asset, 'custom_fields', {}),
+        }
+        asset_fields.update(metadata_serializer.validated_data)
+
+        duplicate_asset = Asset(
+            tenant=asset.tenant,
+            uploaded_by=request.user,
+            name=asset.name,
+            content_type=asset.content_type,
+            size_bytes=asset.size_bytes,
+            file_hash=asset.file_hash,
+            metadata={**asset.metadata},
+            tags=asset_fields['tags'],
+            description=asset_fields['description'],
+            alt_text=asset_fields['alt_text'],
+            creator=asset_fields['creator'],
+            campaign=asset_fields['campaign'],
+            license=asset_fields['license'],
+            custom_fields=asset_fields['custom_fields'],
+        )
+
+        if asset.file:
+            original_name = Path(asset.file.name).name
+            file_stem = Path(original_name).stem or 'asset'
+            file_suffix = Path(original_name).suffix or '.bin'
+            duplicate_name = f"{file_stem}-{uuid.uuid4().hex[:8]}{file_suffix}"
+            with asset.file.open('rb') as source_file:
+                duplicate_asset.file.save(duplicate_name, ContentFile(source_file.read()), save=False)
+            duplicate_asset.object_key = duplicate_asset.file.name
+
+        duplicate_asset.save()
+        record_activity(
+            asset.tenant,
+            request.user,
+            f'Created a new asset copy from “{asset.name}”.',
+        )
+        return Response(self.get_serializer(duplicate_asset).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='bulk-metadata')
     def bulk_metadata(self, request):

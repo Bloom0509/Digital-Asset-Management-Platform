@@ -175,8 +175,68 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
   const canvasRef = useRef(null)
   const isDrawing = useRef(false)
   const hasDrawing = useRef(false)
+  const historyRef = useRef([])
+  const historyIndexRef = useRef(-1)
   const [brushColor, setBrushColor] = useState('#243c37')
   const [brushSize, setBrushSize] = useState(5)
+  const [tool, setTool] = useState('brush')
+  const [livePreview, setLivePreview] = useState('')
+
+  const syncDrawingPreview = useCallback((nextDataUrl) => {
+    const canvas = canvasRef.current
+    const dataUrl = nextDataUrl || canvas?.toDataURL('image/png') || ''
+    if (!dataUrl) return
+    setLivePreview(dataUrl)
+    onDrawingChange(dataUrl)
+  }, [onDrawingChange])
+
+  const pushHistory = useCallback((nextDataUrl) => {
+    const trimmed = nextDataUrl || canvasRef.current?.toDataURL('image/png') || ''
+    if (!trimmed) return
+
+    const previous = historyRef.current[historyIndexRef.current]
+    if (previous === trimmed) return
+
+    historyRef.current = [...historyRef.current.slice(0, historyIndexRef.current + 1), trimmed]
+    if (historyRef.current.length > 25) {
+      historyRef.current = historyRef.current.slice(-25)
+    }
+    historyIndexRef.current = historyRef.current.length - 1
+    setLivePreview(trimmed)
+    onDrawingChange(trimmed)
+  }, [onDrawingChange])
+
+  const applySnapshot = useCallback((dataUrl) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const context = canvas.getContext('2d')
+    const image = new Image()
+    image.onload = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.fillStyle = '#fffdf8'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      hasDrawing.current = Boolean(dataUrl)
+      setLivePreview(dataUrl)
+      onDrawingChange(dataUrl)
+    }
+    image.src = dataUrl
+  }, [onDrawingChange])
+
+  const undoDrawing = useCallback(() => {
+    if (historyIndexRef.current <= 0) return
+    historyIndexRef.current -= 1
+    const previous = historyRef.current[historyIndexRef.current]
+    if (previous) applySnapshot(previous)
+  }, [applySnapshot])
+
+  const redoDrawing = useCallback(() => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return
+    historyIndexRef.current += 1
+    const next = historyRef.current[historyIndexRef.current]
+    if (next) applySnapshot(next)
+  }, [applySnapshot])
 
   const getPoint = (event) => {
     const canvas = canvasRef.current
@@ -192,17 +252,20 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
     const context = canvas.getContext('2d')
     const { x, y } = getPoint(event)
     canvas.setPointerCapture(event.pointerId)
-    context.fillStyle = brushColor
+
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
+    context.strokeStyle = tool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor
+    context.fillStyle = tool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor
+    context.lineWidth = tool === 'eraser' ? brushSize * 2 : brushSize
+
     context.beginPath()
     const scale = canvas.width / canvas.getBoundingClientRect().width
-    context.arc(x, y, (brushSize * scale) / 2, 0, Math.PI * 2)
+    context.arc(x, y, (context.lineWidth * scale) / 2, 0, Math.PI * 2)
     context.fill()
     context.beginPath()
     context.moveTo(x, y)
-    context.strokeStyle = brushColor
-    context.lineWidth = brushSize * scale
-    context.lineCap = 'round'
-    context.lineJoin = 'round'
     hasDrawing.current = true
     isDrawing.current = true
   }
@@ -219,16 +282,23 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
   const finishDrawing = () => {
     if (!isDrawing.current) return
     isDrawing.current = false
-    if (hasDrawing.current) onDrawingChange(canvasRef.current.toDataURL('image/png'))
+    const canvas = canvasRef.current
+    const context = canvas.getContext('2d')
+    context.globalCompositeOperation = 'source-over'
+    if (hasDrawing.current) {
+      const dataUrl = canvas.toDataURL('image/png')
+      pushHistory(dataUrl)
+    }
   }
 
   const clearDrawing = () => {
     const canvas = canvasRef.current
     const context = canvas.getContext('2d')
+    context.clearRect(0, 0, canvas.width, canvas.height)
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
     hasDrawing.current = false
-    onDrawingChange('')
+    pushHistory(canvas.toDataURL('image/png'))
   }
 
   const chooseIdea = (idea) => {
@@ -241,7 +311,7 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
       context.fillRect(0, 0, canvas.width, canvas.height)
       context.drawImage(image, 0, 0, canvas.width, canvas.height)
       hasDrawing.current = true
-      onDrawingChange(canvas.toDataURL('image/png'))
+      pushHistory(canvas.toDataURL('image/png'))
     }
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(idea.svg)}`
   }
@@ -265,12 +335,17 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
       context.fillStyle = '#fffdf8'
       context.fillRect(0, 0, width, height)
       if (hasDrawing.current) context.drawImage(previous, 0, 0, width, height)
+      const initialDataUrl = canvas.toDataURL('image/png')
+      historyRef.current = [initialDataUrl]
+      historyIndexRef.current = 0
+      setLivePreview(initialDataUrl)
+      onDrawingChange(initialDataUrl)
     }
     const observer = new ResizeObserver(resizeCanvas)
     observer.observe(canvas)
     resizeCanvas()
     return () => observer.disconnect()
-  }, [])
+  }, [onDrawingChange])
 
   return (
     <section className="doodle-editor" aria-label="Doodle drawing area">
@@ -279,9 +354,15 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
         <button type="button" className="ghost doodle-clear" onClick={clearDrawing}>Clear</button>
       </div>
       <div className="doodle-toolbar">
+        <div className="doodle-tool-group">
+          <button type="button" className={`doodle-tool ${tool === 'brush' ? 'active' : ''}`} onClick={() => setTool('brush')}>Brush</button>
+          <button type="button" className={`doodle-tool ${tool === 'eraser' ? 'active' : ''}`} onClick={() => setTool('eraser')}>Eraser</button>
+          <button type="button" className="doodle-tool secondary" onClick={undoDrawing} disabled={historyIndexRef.current <= 0}>Undo</button>
+          <button type="button" className="doodle-tool secondary" onClick={redoDrawing} disabled={historyIndexRef.current >= historyRef.current.length - 1}>Redo</button>
+        </div>
         <label className="doodle-color-label" title="Brush color">
           <span>Color</span>
-          <input aria-label="Brush color" type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+          <input aria-label="Brush color" type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} disabled={tool === 'eraser'} />
         </label>
         <label className="doodle-size-label">
           <span>Brush</span>
@@ -301,6 +382,10 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
           </div>
         </div>
       )}
+      <div className="doodle-live-preview">
+        <span>Live preview</span>
+        {livePreview ? <img src={livePreview} alt="Current canvas preview" /> : <div className="doodle-live-empty">No drawing yet</div>}
+      </div>
       <canvas
         ref={canvasRef}
         className="doodle-canvas"
@@ -1178,8 +1263,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     setMenu(null)
   }
 
-  const saveAssetMetadata = async (event) => {
-    event.preventDefault()
+  const saveAssetMetadata = async (event, mode = 'overwrite') => {
+    if (event) event.preventDefault()
     if (!metadataAsset || !/^[0-9a-f-]{36}$/i.test(metadataAsset.id || '')) {
       showNotice('Only saved assets can have metadata edited.')
       return
@@ -1193,31 +1278,49 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       return
     }
 
+    const shouldRewrite = mode === 'overwrite'
+
     setIsSavingMetadata(true)
     try {
-      const response = await apiRequest(`/api/assets/${metadataAsset.id}/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(metadata),
-      })
+      const requestPath = shouldRewrite ? `/api/assets/${metadataAsset.id}/` : `/api/assets/${metadataAsset.id}/duplicate/`
+      const requestOptions = shouldRewrite
+        ? {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(metadata),
+          }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ metadata }),
+          }
+
+      const response = await apiRequest(requestPath, requestOptions)
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         const detail = data?.detail || Object.values(data || {}).flat()?.[0]
         throw new Error(detail || 'Unable to save asset metadata.')
       }
 
-      const mappedAsset = mapApiAsset(data)
-      const updatedAsset = { ...metadataAsset, ...mappedAsset, image: metadataAsset.image || mappedAsset.image }
-      const replaceAsset = (asset) => asset.id === updatedAsset.id ? { ...asset, ...updatedAsset } : asset
-      setAssets((current) => current.map(replaceAsset))
-      setTrashAssets((current) => current.map(replaceAsset))
-      setCollections((current) => current.map((collection) => ({
-        ...collection,
-        assets: (collection.assets || []).map(replaceAsset),
-      })))
-      setPreviewAsset((current) => current?.id === updatedAsset.id ? { ...current, ...updatedAsset } : current)
+      if (shouldRewrite) {
+        const mappedAsset = mapApiAsset(data)
+        const updatedAsset = { ...metadataAsset, ...mappedAsset, image: metadataAsset.image || mappedAsset.image }
+        const replaceAsset = (asset) => asset.id === updatedAsset.id ? { ...asset, ...updatedAsset } : asset
+        setAssets((current) => current.map(replaceAsset))
+        setTrashAssets((current) => current.map(replaceAsset))
+        setCollections((current) => current.map((collection) => ({
+          ...collection,
+          assets: (collection.assets || []).map(replaceAsset),
+        })))
+        setPreviewAsset((current) => current?.id === updatedAsset.id ? { ...current, ...updatedAsset } : current)
+        showNotice('Asset metadata saved.')
+      } else {
+        const newAsset = mapApiAsset(data)
+        setAssets((current) => [newAsset, ...current.filter((asset) => asset.id !== newAsset.id)])
+        showNotice('New asset created from this edit.')
+      }
+
       setMetadataAsset(null)
-      showNotice('Asset metadata saved.')
     } catch (error) {
       showNotice(error.message || 'Unable to save asset metadata.')
     } finally {
@@ -1810,11 +1913,16 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         onSubmit={submitUploadMetadata}
       />}
       {metadataAsset && <AssetMetadataModal
+        asset={metadataAsset}
         form={metadataForm}
         isSaving={isSavingMetadata}
         onChange={setMetadataForm}
         onClose={() => { if (!isSavingMetadata) setMetadataAsset(null) }}
-        onSubmit={saveAssetMetadata}
+        onSubmit={(event) => saveAssetMetadata(event, 'overwrite')}
+        onPreview={() => metadataAsset && openAssetPreview(metadataAsset)}
+        onSaveAs={(event) => saveAssetMetadata(event, 'copy')}
+        submitLabel="Save"
+        saveAsLabel="Save as new"
       />}
     </div>
   )

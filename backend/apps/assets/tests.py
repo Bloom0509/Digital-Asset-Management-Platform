@@ -222,6 +222,48 @@ class AssetAccessTests(TestCase):
         self.assertEqual(update_response.json()["description"], "Final approved artwork.")
         self.assertEqual(update_response.json()["creator"], "Design team")
 
+    def test_duplicate_asset_creates_a_new_asset_with_same_file_and_updated_metadata(self):
+        user = get_user_model().objects.create_user(
+            username=f"duplicate-asset-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        create_response = client.post(
+            "/api/assets/",
+            {
+                "name": "Original asset",
+                "object_key": f"duplicate/{uuid.uuid4().hex}.png",
+                "content_type": "image/png",
+                "tags": ["summer"],
+                "description": "Initial asset description",
+                "campaign": "Spring launch",
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, 201, create_response.content)
+        asset_id = create_response.json()["id"]
+
+        duplicate_response = client.post(
+            reverse("asset-duplicate", args=[asset_id]),
+            {
+                "metadata": {
+                    "tags": ["winter", "updated"],
+                    "description": "Fresh variant with new metadata",
+                    "campaign": "Winter launch",
+                }
+            },
+            format="json",
+        )
+
+        self.assertEqual(duplicate_response.status_code, 201, duplicate_response.content)
+        self.assertNotEqual(duplicate_response.json()["id"], asset_id)
+        self.assertEqual(duplicate_response.json()["name"], "Original asset")
+        self.assertEqual(duplicate_response.json()["tags"], ["winter", "updated"])
+        self.assertEqual(duplicate_response.json()["description"], "Fresh variant with new metadata")
+        self.assertEqual(duplicate_response.json()["campaign"], "Winter launch")
+        self.assertEqual(len(client.get("/api/assets/").json()), 2)
+
     def test_bulk_metadata_updates_selected_assets_and_records_activity(self):
         user = get_user_model().objects.create_user(
             username=f"bulk-metadata-{uuid.uuid4().hex[:8]}", password="StrongPass123"

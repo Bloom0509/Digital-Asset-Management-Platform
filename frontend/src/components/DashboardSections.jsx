@@ -194,7 +194,22 @@ export function AssetMetadataFields({ form, onChange, className = '' }) {
   )
 }
 
-export function AssetMetadataModal({ form, isSaving, onChange, onClose, onSubmit, title = 'Edit metadata', description = 'Improve discovery and give your team the context they need.', submitLabel = 'Save metadata' }) {
+export function AssetMetadataModal({
+  form,
+  isSaving,
+  onChange,
+  onClose,
+  onSubmit,
+  onPreview,
+  onSaveAs,
+  asset = null,
+  title = 'Edit metadata',
+  description = 'Improve discovery and give your team the context they need.',
+  submitLabel = 'Save',
+  saveAsLabel = 'Save as new',
+}) {
+  const isVideo = asset?.kind === 'video' || asset?.content_type?.startsWith('video/')
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <form className="asset-modal metadata-modal" onSubmit={onSubmit} onClick={(event) => event.stopPropagation()}>
@@ -204,10 +219,29 @@ export function AssetMetadataModal({ form, isSaving, onChange, onClose, onSubmit
           <h3>{title}</h3>
           <p>{description}</p>
         </div>
+
+        {asset && (
+          <div className="asset-edit-preview">
+            <div className="asset-edit-preview-frame">
+              {isVideo ? (
+                <video src={asset.image || asset.file_url} controls playsInline className="asset-modal-image asset-edit-video" />
+              ) : (
+                <img src={asset.image || asset.file_url} alt={asset.name} className="asset-modal-image asset-edit-image" />
+              )}
+            </div>
+            <div className="asset-edit-meta">
+              <strong>{asset.name}</strong>
+              <span>{asset.size || 'Unknown size'} · {asset.type || 'FILE'}</span>
+            </div>
+          </div>
+        )}
+
         <AssetMetadataFields form={form} onChange={onChange} />
         <div className="create-asset-actions">
           <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
+          {onPreview && <button type="button" className="ghost create-cancel" onClick={onPreview} disabled={isSaving}>Preview</button>}
           <button type="submit" className="upload create-submit" disabled={isSaving}>{isSaving ? 'Saving…' : submitLabel}</button>
+          {onSaveAs && <button type="button" className="upload secondary create-submit" disabled={isSaving} onClick={onSaveAs}>{isSaving ? 'Saving…' : saveAsLabel}</button>}
         </div>
       </form>
     </div>
