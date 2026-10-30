@@ -87,7 +87,7 @@ export function AssetGrid({
           activeSection={activeSection}
           canManageWorkspace={canManageWorkspace}
           isAdmin={isAdmin}
-          isMenuOpen={menu === asset.name}
+          isMenuOpen={menu === getAssetSelectionKey(asset)}
           onToggleSelect={onToggleSelect}
           onToggleMenu={onToggleMenu}
           onOpenPreview={onOpenPreview}
@@ -201,6 +201,7 @@ export function AssetMetadataModal({
   onClose,
   onSubmit,
   onPreview,
+  canvasEditor,
   onSaveAs,
   asset = null,
   title = 'Edit metadata',
@@ -219,6 +220,8 @@ export function AssetMetadataModal({
           <h3>{title}</h3>
           <p>{description}</p>
         </div>
+
+        {canvasEditor}
 
         {asset && (
           <div className="asset-edit-preview">

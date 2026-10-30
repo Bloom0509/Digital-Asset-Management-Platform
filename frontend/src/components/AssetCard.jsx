@@ -1,3 +1,5 @@
+import { getAssetSelectionKey } from './assetSelection.js'
+
 function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onEditMetadata, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
   return (
     <div className="menu">
@@ -82,7 +84,7 @@ export default function AssetCard({
           asset.image && <img src={asset.image} alt={asset.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         )}
         <span className="asset-type">{asset.type}</span>
-        <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); onToggleMenu(asset.name) }} aria-label={`More options for ${asset.name}`}>...</button>
+        <button className="card-menu" type="button" onClick={(event) => { event.stopPropagation(); onToggleMenu(getAssetSelectionKey(asset)) }} aria-label={`More options for ${asset.name}`}>...</button>
         {isMenuOpen && (
           <AssetCardMenu
             asset={asset}

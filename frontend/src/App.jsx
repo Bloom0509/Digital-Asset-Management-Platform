@@ -171,12 +171,13 @@ function AuthView({ authMode, setAuthMode, authForm, setAuthForm, isSubmitting, 
   )
 }
 
-function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdeas = [] }) {
+function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdeas = [], initialDataUrl = '' }) {
   const canvasRef = useRef(null)
   const isDrawing = useRef(false)
   const hasDrawing = useRef(false)
   const historyRef = useRef([])
   const historyIndexRef = useRef(-1)
+  const initialDrawingLoaded = useRef(false)
   const [brushColor, setBrushColor] = useState('#243c37')
   const [brushSize, setBrushSize] = useState(5)
   const [tool, setTool] = useState('brush')
@@ -335,17 +336,35 @@ function DoodleCanvas({ onDrawingChange, selectedIdea, onIdeaSelect, drawingIdea
       context.fillStyle = '#fffdf8'
       context.fillRect(0, 0, width, height)
       if (hasDrawing.current) context.drawImage(previous, 0, 0, width, height)
-      const initialDataUrl = canvas.toDataURL('image/png')
-      historyRef.current = [initialDataUrl]
+      if (initialDataUrl && !initialDrawingLoaded.current) {
+        initialDrawingLoaded.current = true
+        const image = new Image()
+        image.onload = () => {
+          context.clearRect(0, 0, canvas.width, canvas.height)
+          context.fillStyle = '#fffdf8'
+          context.fillRect(0, 0, canvas.width, canvas.height)
+          context.drawImage(image, 0, 0, canvas.width, canvas.height)
+          hasDrawing.current = true
+          const initialData = canvas.toDataURL('image/png')
+          historyRef.current = [initialData]
+          historyIndexRef.current = 0
+          setLivePreview(initialData)
+          onDrawingChange(initialData)
+        }
+        image.src = initialDataUrl
+        return
+      }
+      const initialDataSnapshot = canvas.toDataURL('image/png')
+      historyRef.current = [initialDataSnapshot]
       historyIndexRef.current = 0
-      setLivePreview(initialDataUrl)
-      onDrawingChange(initialDataUrl)
+      setLivePreview(initialDataSnapshot)
+      if (!initialDrawingLoaded.current) onDrawingChange(initialDataSnapshot)
     }
     const observer = new ResizeObserver(resizeCanvas)
     observer.observe(canvas)
     resizeCanvas()
     return () => observer.disconnect()
-  }, [onDrawingChange])
+  }, [initialDataUrl, onDrawingChange])
 
   return (
     <section className="doodle-editor" aria-label="Doodle drawing area">
@@ -462,6 +481,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState(null)
   const [drawingDataUrl, setDrawingDataUrl] = useState('')
+  const [editedDrawingDataUrl, setEditedDrawingDataUrl] = useState('')
   const [selectedDrawingIdea, setSelectedDrawingIdea] = useState('')
   const [isAiLoading, setIsAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
@@ -1260,6 +1280,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const openMetadataEditor = (asset) => {
     setMetadataAsset(asset)
     setMetadataForm(metadataFormFromAsset(asset))
+    setEditedDrawingDataUrl(asset.metadata?.doodle_image_data_url || '')
     setMenu(null)
   }
 
@@ -1283,16 +1304,27 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     setIsSavingMetadata(true)
     try {
       const requestPath = shouldRewrite ? `/api/assets/${metadataAsset.id}/` : `/api/assets/${metadataAsset.id}/duplicate/`
+      const drawingMetadata = metadataAsset.metadata?.doodle_image_data_url && editedDrawingDataUrl
+        ? { metadata: { ...(metadataAsset.metadata || {}), doodle_image_data_url: editedDrawingDataUrl } }
+        : {}
       const requestOptions = shouldRewrite
         ? {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(metadata),
+            body: JSON.stringify({
+              ...metadata,
+              ...drawingMetadata,
+              ...(drawingMetadata.metadata ? { size_bytes: Math.round((editedDrawingDataUrl.length * 3) / 4) } : {}),
+            }),
           }
         : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ metadata }),
+            body: JSON.stringify({ metadata: {
+              ...metadata,
+              ...drawingMetadata,
+              ...(drawingMetadata.metadata ? { size_bytes: Math.round((editedDrawingDataUrl.length * 3) / 4) } : {}),
+            } }),
           }
 
       const response = await apiRequest(requestPath, requestOptions)
@@ -1304,7 +1336,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
       if (shouldRewrite) {
         const mappedAsset = mapApiAsset(data)
-        const updatedAsset = { ...metadataAsset, ...mappedAsset, image: metadataAsset.image || mappedAsset.image }
+        const updatedAsset = { ...metadataAsset, ...mappedAsset, image: editedDrawingDataUrl || metadataAsset.image || mappedAsset.image }
         const replaceAsset = (asset) => asset.id === updatedAsset.id ? { ...asset, ...updatedAsset } : asset
         setAssets((current) => current.map(replaceAsset))
         setTrashAssets((current) => current.map(replaceAsset))
@@ -1313,7 +1345,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           assets: (collection.assets || []).map(replaceAsset),
         })))
         setPreviewAsset((current) => current?.id === updatedAsset.id ? { ...current, ...updatedAsset } : current)
-        showNotice('Asset metadata saved.')
+        showNotice('Asset saved.')
       } else {
         const newAsset = mapApiAsset(data)
         setAssets((current) => [newAsset, ...current.filter((asset) => asset.id !== newAsset.id)])
@@ -1679,7 +1711,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               isAdmin={activeWorkspaceRole === 'admin'}
               menu={menu}
               onToggleSelect={toggleAssetSelection}
-              onToggleMenu={(name) => setMenu(menu === name ? null : name)}
+              onToggleMenu={(assetKey) => setMenu(menu === assetKey ? null : assetKey)}
               onOpenPreview={openAssetPreview}
               onDownload={downloadAsset}
               onRename={renameAsset}
@@ -1916,12 +1948,21 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         asset={metadataAsset}
         form={metadataForm}
         isSaving={isSavingMetadata}
+        title="Edit asset"
+        description="Update asset details and its canvas drawing."
         onChange={setMetadataForm}
         onClose={() => { if (!isSavingMetadata) setMetadataAsset(null) }}
         onSubmit={(event) => saveAssetMetadata(event, 'overwrite')}
         onPreview={() => metadataAsset && openAssetPreview(metadataAsset)}
         onSaveAs={(event) => saveAssetMetadata(event, 'copy')}
-        submitLabel="Save"
+        canvasEditor={metadataAsset.metadata?.doodle_image_data_url ? <DoodleCanvas
+          key={`asset-canvas-${metadataAsset.id}`}
+          initialDataUrl={metadataAsset.metadata.doodle_image_data_url}
+          onDrawingChange={setEditedDrawingDataUrl}
+          selectedIdea=""
+          onIdeaSelect={() => {}}
+        /> : null}
+        submitLabel="Save changes"
         saveAsLabel="Save as new"
       />}
     </div>

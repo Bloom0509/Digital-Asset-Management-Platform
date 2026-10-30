@@ -111,6 +111,8 @@ class AssetViewSet(viewsets.ModelViewSet):
         metadata_serializer.is_valid(raise_exception=True)
 
         asset_fields = {
+            'metadata': {**asset.metadata},
+            'size_bytes': asset.size_bytes,
             'tags': getattr(asset, 'tags', []),
             'description': getattr(asset, 'description', ''),
             'alt_text': getattr(asset, 'alt_text', ''),
@@ -126,9 +128,9 @@ class AssetViewSet(viewsets.ModelViewSet):
             uploaded_by=request.user,
             name=asset.name,
             content_type=asset.content_type,
-            size_bytes=asset.size_bytes,
+            size_bytes=asset_fields['size_bytes'],
             file_hash=asset.file_hash,
-            metadata={**asset.metadata},
+            metadata=asset_fields['metadata'],
             tags=asset_fields['tags'],
             description=asset_fields['description'],
             alt_text=asset_fields['alt_text'],
