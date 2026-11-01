@@ -6,7 +6,7 @@ from django.conf import settings
 from django.urls import reverse
 from rest_framework import serializers
 
-from .models import Asset
+from .models import Asset, AssetVersion
 
 
 class AssetSerializer(serializers.ModelSerializer):
@@ -72,6 +72,25 @@ class AssetSerializer(serializers.ModelSerializer):
         if not asset.file or not asset.content_type.startswith("image/"):
             return None
         return f"{reverse('asset-file', kwargs={'pk': asset.pk})}?thumbnail=1"
+
+
+class AssetVersionSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AssetVersion
+        fields = (
+            "id", "asset", "version_number", "uploaded_by", "name", "content_type", "size_bytes",
+            "file_hash", "metadata", "tags", "description", "alt_text", "creator", "campaign",
+            "license", "custom_fields", "created_at", "file_url",
+        )
+        read_only_fields = fields
+
+    def get_file_url(self, version):
+        return reverse(
+            "asset-version-file",
+            kwargs={"pk": version.asset_id, "version_id": version.pk},
+        )
 
 
 class AssetUploadSerializer(serializers.Serializer):

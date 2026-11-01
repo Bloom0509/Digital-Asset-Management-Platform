@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import ActivityItem from './ActivityItem.jsx'
 import AssetCard from './AssetCard.jsx'
 import CollectionCard from './CollectionCard.jsx'
@@ -203,6 +204,14 @@ export function AssetMetadataModal({
   onPreview,
   canvasEditor,
   onSaveAs,
+  versions = [],
+  selectedVersionId = '',
+  onSelectVersion,
+  onRestoreVersion,
+  isLoadingVersions = false,
+  replacementFile = null,
+  onReplacementFileChange,
+  apiRequest,
   asset = null,
   title = 'Edit metadata',
   description = 'Improve discovery and give your team the context they need.',
@@ -210,6 +219,40 @@ export function AssetMetadataModal({
   saveAsLabel = 'Save as new',
 }) {
   const isVideo = asset?.kind === 'video' || asset?.content_type?.startsWith('video/')
+  const selectedVersion = versions.find((version) => version.id === selectedVersionId)
+  const [comparisonFiles, setComparisonFiles] = useState({})
+
+  useEffect(() => {
+    let isStale = false
+    const objectUrls = []
+    const loadFile = async (key, fileUrl) => {
+      if (!fileUrl || !apiRequest) return
+      try {
+        const response = await apiRequest(fileUrl)
+        if (!response.ok) return
+        const objectUrl = URL.createObjectURL(await response.blob())
+        objectUrls.push(objectUrl)
+        if (!isStale) setComparisonFiles((current) => ({ ...current, [key]: objectUrl }))
+      } catch {}
+    }
+
+    setComparisonFiles({})
+    loadFile('current', asset?.file_url)
+    loadFile('version', selectedVersion?.file_url)
+    return () => {
+      isStale = true
+      objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
+    }
+  }, [apiRequest, asset?.file_url, selectedVersion?.file_url])
+
+  const formatSize = (sizeBytes) => `${(Number(sizeBytes || 0) / 1024 / 1024).toFixed(1)} MB`
+  const comparisonFields = [
+    ['Tags', (value) => (value.tags || []).join(', ') || 'None'],
+    ['Description', (value) => value.description || 'None'],
+    ['Creator', (value) => value.creator || 'None'],
+    ['Campaign', (value) => value.campaign || 'None'],
+    ['License', (value) => value.license || 'None'],
+  ]
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -227,9 +270,9 @@ export function AssetMetadataModal({
           <div className="asset-edit-preview">
             <div className="asset-edit-preview-frame">
               {isVideo ? (
-                <video src={asset.image || asset.file_url} controls playsInline className="asset-modal-image asset-edit-video" />
+                <video src={comparisonFiles.current || asset.image || asset.file_url} controls playsInline className="asset-modal-image asset-edit-video" />
               ) : (
-                <img src={asset.image || asset.file_url} alt={asset.name} className="asset-modal-image asset-edit-image" />
+                <img src={comparisonFiles.current || asset.image || asset.file_url} alt={asset.name} className="asset-modal-image asset-edit-image" />
               )}
             </div>
             <div className="asset-edit-meta">
@@ -239,12 +282,76 @@ export function AssetMetadataModal({
           </div>
         )}
 
+        {asset && (
+          <section className="asset-version-history" aria-labelledby="asset-version-heading">
+            <div className="asset-version-heading">
+              <div>
+                <h4 id="asset-version-heading">Version history</h4>
+                <span>{isLoadingVersions ? 'Loading versions…' : `${versions.length} previous version${versions.length === 1 ? '' : 's'}`}</span>
+              </div>
+              <label>
+                <span className="sr-only">Choose a version to compare</span>
+                <select value={selectedVersionId} onChange={(event) => onSelectVersion?.(event.target.value)} disabled={!versions.length || isLoadingVersions}>
+                  {versions.length ? versions.map((version) => (
+                    <option key={version.id} value={version.id}>
+                      Version {version.version_number} · {new Date(version.created_at).toLocaleString()}
+                    </option>
+                  )) : <option value="">No saved versions</option>}
+                </select>
+              </label>
+            </div>
+            {selectedVersion && (
+              <>
+                <div className="asset-version-previews">
+                  {[{ label: 'Current', data: asset, preview: comparisonFiles.current }, { label: `Version ${selectedVersion.version_number}`, data: selectedVersion, preview: comparisonFiles.version }].map(({ label, data, preview }) => (
+                    <div className="asset-version-preview" key={label}>
+                      <strong>{label}</strong>
+                      {preview && data.content_type?.startsWith('image/') ? (
+                        <img src={preview} alt={`${label} preview`} />
+                      ) : preview && data.content_type?.startsWith('video/') ? (
+                        <video src={preview} controls playsInline />
+                      ) : (
+                        <div className="asset-version-file-label">{data.content_type || 'File'}</div>
+                      )}
+                      <span>{data.name} · {formatSize(data.size_bytes)}</span>
+                    </div>
+                  ))}
+                </div>
+                <dl className="asset-version-diff">
+                  {comparisonFields.map(([label, formatValue]) => (
+                    <div key={label}>
+                      <dt>{label}</dt>
+                      <dd><span>{formatValue(asset)}</span><span>{formatValue(selectedVersion)}</span></dd>
+                    </div>
+                  ))}
+                </dl>
+                <button type="button" className="ghost asset-version-restore" onClick={() => onRestoreVersion?.(selectedVersion)} disabled={isSaving || !onRestoreVersion}>
+                  Restore version {selectedVersion.version_number}
+                </button>
+              </>
+            )}
+          </section>
+        )}
+
+        {asset && (
+          <label className="asset-replacement-picker">
+            <span>Replace active file</span>
+            <input
+              type="file"
+              accept=".jpg,.jpeg,.png,.gif,.webp,.avif,.mp4,.webm,.mov,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+              onChange={(event) => onReplacementFileChange?.(event.target.files?.[0] || null)}
+              disabled={isSaving}
+            />
+            <small>{replacementFile ? `${replacementFile.name} selected` : 'The existing file will be saved as a restorable version.'}</small>
+          </label>
+        )}
+
         <AssetMetadataFields form={form} onChange={onChange} />
         <div className="create-asset-actions">
           <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
           {onPreview && <button type="button" className="ghost create-cancel" onClick={onPreview} disabled={isSaving}>Preview</button>}
           <button type="submit" className="upload create-submit" disabled={isSaving}>{isSaving ? 'Saving…' : submitLabel}</button>
-          {onSaveAs && <button type="button" className="upload secondary create-submit" disabled={isSaving} onClick={onSaveAs}>{isSaving ? 'Saving…' : saveAsLabel}</button>}
+          {onSaveAs && <button type="button" className="upload secondary create-submit" disabled={isSaving || Boolean(replacementFile)} onClick={onSaveAs} title={replacementFile ? 'Clear the replacement file to save a separate copy.' : undefined}>{isSaving ? 'Saving…' : saveAsLabel}</button>}
         </div>
       </form>
     </div>

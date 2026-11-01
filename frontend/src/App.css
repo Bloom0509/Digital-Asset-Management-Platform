@@ -1166,6 +1166,154 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   font-size: 12px;
 }
 
+.asset-version-history {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.asset-version-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-version-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.asset-version-heading h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.asset-version-heading span,
+.asset-version-preview > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.asset-version-heading select {
+  max-width: 260px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  background: var(--input);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.asset-version-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.asset-version-preview {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.asset-version-preview img,
+.asset-version-preview video,
+.asset-version-file-label {
+  display: grid;
+  width: 100%;
+  height: 110px;
+  margin: 0;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--panel-alt);
+  color: var(--muted);
+  object-fit: contain;
+}
+
+.asset-version-preview > span {
+  overflow-wrap: anywhere;
+}
+
+.asset-version-diff {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.asset-version-diff > div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--toolbar-border);
+}
+
+.asset-version-diff dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.asset-version-diff dd {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.asset-version-restore {
+  justify-self: start;
+}
+
+.asset-replacement-picker {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 18px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.asset-replacement-picker input {
+  max-width: 100%;
+  color: var(--text);
+  font: 400 12px Arial, sans-serif;
+}
+
+.asset-replacement-picker small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .metadata-modal .eyebrow {
   margin-bottom: 8px;
 }
@@ -1215,6 +1363,22 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 
 .metadata-modal .create-asset-actions {
   margin-top: 20px;
+}
+
+@media (max-width: 560px) {
+  .asset-version-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .asset-version-heading select {
+    max-width: none;
+    width: 100%;
+  }
+
+  .asset-version-diff > div {
+    grid-template-columns: 70px minmax(0, 1fr);
+  }
 }
 
 .bulk-metadata-fields {

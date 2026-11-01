@@ -19,6 +19,14 @@ def asset_upload_path(instance, filename):
     return f"tenants/{instance.tenant_id}/{instance.pk}/{uuid.uuid4().hex}{extension}"
 
 
+def asset_version_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()[:12]
+    return (
+        f"tenants/{instance.asset.tenant_id}/{instance.asset_id}/versions/"
+        f"{instance.version_number}/{uuid.uuid4().hex}{extension}"
+    )
+
+
 class Asset(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE, related_name="assets")
@@ -43,3 +51,36 @@ class Asset(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["tenant", "created_at"])]
+
+
+class AssetVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="versions")
+    version_number = models.PositiveIntegerField()
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="asset_versions",
+    )
+    file = models.FileField(upload_to=asset_version_upload_path, max_length=500)
+    name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=150)
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    file_hash = models.CharField(max_length=64, blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    description = models.TextField(blank=True)
+    alt_text = models.CharField(max_length=500, blank=True)
+    creator = models.CharField(max_length=150, blank=True)
+    campaign = models.CharField(max_length=150, blank=True)
+    license = models.CharField(max_length=150, blank=True)
+    custom_fields = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version_number"]
+        constraints = [
+            models.UniqueConstraint(fields=["asset", "version_number"], name="unique_asset_version_number"),
+        ]

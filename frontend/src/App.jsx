@@ -457,6 +457,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [previewAsset, setPreviewAsset] = useState(null)
   const [metadataAsset, setMetadataAsset] = useState(null)
   const [metadataForm, setMetadataForm] = useState(metadataFormFromAsset({}))
+  const [assetVersions, setAssetVersions] = useState([])
+  const [selectedVersionId, setSelectedVersionId] = useState('')
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false)
+  const [replacementFile, setReplacementFile] = useState(null)
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
   const [bulkMetadataOpen, setBulkMetadataOpen] = useState(false)
   const [bulkMetadataForm, setBulkMetadataForm] = useState(emptyMetadataForm)
@@ -604,9 +608,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   }, [apiRequest, currentWorkspace?.id])
 
   const protectedFileUrls = [...assets, ...trashAssets, ...collections.flatMap((collection) => collection.assets || [])]
-    .map((asset) => asset.thumbnail_url)
+    .filter((asset) => asset.thumbnail_url)
+    .map((asset) => `${asset.thumbnail_url}\t${asset.updated_at || ''}`)
     .filter(Boolean)
-    .filter((url, index, urls) => urls.indexOf(url) === index)
+    .filter((reference, index, references) => references.indexOf(reference) === index)
     .sort()
   const protectedFileKey = protectedFileUrls.join('\n')
 
@@ -615,9 +620,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     let cancelled = false
     const objectUrls = []
 
-    Promise.all(protectedFileKey.split('\n').map(async (url) => {
+    Promise.all(protectedFileKey.split('\n').map(async (reference) => {
+      const [url, updatedAt] = reference.split('\t')
+      const requestUrl = `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt)}`
       try {
-        const response = await apiRequest(url)
+        const response = await apiRequest(requestUrl)
         if (!response.ok) return null
         const blobUrl = URL.createObjectURL(await response.blob())
         objectUrls.push(blobUrl)
@@ -637,6 +644,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         ...collection,
         assets: (collection.assets || []).map(attachPreview),
       })))
+      setPreviewAsset((current) => current ? attachPreview(current) : current)
     })
 
     return () => {
@@ -1277,11 +1285,28 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     showNotice(`${asset.name} renamed to ${newName}.`)
   }
 
-  const openMetadataEditor = (asset) => {
+  const openMetadataEditor = async (asset) => {
     setMetadataAsset(asset)
     setMetadataForm(metadataFormFromAsset(asset))
     setEditedDrawingDataUrl(asset.metadata?.doodle_image_data_url || '')
+    setAssetVersions([])
+    setSelectedVersionId('')
+    setReplacementFile(null)
     setMenu(null)
+    if (!asset.id) return
+
+    setIsLoadingVersions(true)
+    try {
+      const response = await apiRequest(`/api/assets/${asset.id}/versions/`)
+      const data = await response.json().catch(() => [])
+      if (!response.ok) throw new Error(data?.detail || 'Unable to load asset versions.')
+      setAssetVersions(data)
+      setSelectedVersionId(data[0]?.id || '')
+    } catch (error) {
+      showNotice(error.message || 'Unable to load asset versions.')
+    } finally {
+      setIsLoadingVersions(false)
+    }
   }
 
   const saveAssetMetadata = async (event, mode = 'overwrite') => {
@@ -1303,29 +1328,41 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     setIsSavingMetadata(true)
     try {
-      const requestPath = shouldRewrite ? `/api/assets/${metadataAsset.id}/` : `/api/assets/${metadataAsset.id}/duplicate/`
-      const drawingMetadata = metadataAsset.metadata?.doodle_image_data_url && editedDrawingDataUrl
-        ? { metadata: { ...(metadataAsset.metadata || {}), doodle_image_data_url: editedDrawingDataUrl } }
-        : {}
-      const requestOptions = shouldRewrite
-        ? {
+      let drawingMetadata = {}
+      if (shouldRewrite && replacementFile && metadataAsset.metadata?.doodle_image_data_url) {
+        const metadataWithoutDrawing = { ...(metadataAsset.metadata || {}) }
+        delete metadataWithoutDrawing.doodle_image_data_url
+        drawingMetadata = { metadata: metadataWithoutDrawing }
+      } else if (metadataAsset.metadata?.doodle_image_data_url && editedDrawingDataUrl) {
+        drawingMetadata = { metadata: { ...(metadataAsset.metadata || {}), doodle_image_data_url: editedDrawingDataUrl } }
+      }
+      const metadataToSave = {
+        ...metadata,
+        ...drawingMetadata,
+        ...(drawingMetadata.metadata && !replacementFile ? { size_bytes: Math.round((editedDrawingDataUrl.length * 3) / 4) } : {}),
+      }
+      let requestPath
+      let requestOptions
+      if (shouldRewrite && replacementFile) {
+        requestPath = `/api/assets/${metadataAsset.id}/replace-file/`
+        const formData = new FormData()
+        formData.append('file', replacementFile)
+        formData.append('metadata', JSON.stringify(metadataToSave))
+        requestOptions = { method: 'POST', body: formData }
+      } else {
+        requestPath = shouldRewrite ? `/api/assets/${metadataAsset.id}/` : `/api/assets/${metadataAsset.id}/duplicate/`
+        requestOptions = shouldRewrite
+          ? {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...metadata,
-              ...drawingMetadata,
-              ...(drawingMetadata.metadata ? { size_bytes: Math.round((editedDrawingDataUrl.length * 3) / 4) } : {}),
-            }),
+            body: JSON.stringify(metadataToSave),
           }
-        : {
+          : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ metadata: {
-              ...metadata,
-              ...drawingMetadata,
-              ...(drawingMetadata.metadata ? { size_bytes: Math.round((editedDrawingDataUrl.length * 3) / 4) } : {}),
-            } }),
+            body: JSON.stringify({ metadata: metadataToSave }),
           }
+      }
 
       const response = await apiRequest(requestPath, requestOptions)
       const data = await response.json().catch(() => ({}))
@@ -1336,7 +1373,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
       if (shouldRewrite) {
         const mappedAsset = mapApiAsset(data)
-        const updatedAsset = { ...metadataAsset, ...mappedAsset, image: editedDrawingDataUrl || metadataAsset.image || mappedAsset.image }
+        const updatedAsset = {
+          ...metadataAsset,
+          ...mappedAsset,
+          image: replacementFile ? mappedAsset.image : editedDrawingDataUrl || metadataAsset.image || mappedAsset.image,
+        }
         const replaceAsset = (asset) => asset.id === updatedAsset.id ? { ...asset, ...updatedAsset } : asset
         setAssets((current) => current.map(replaceAsset))
         setTrashAssets((current) => current.map(replaceAsset))
@@ -1345,6 +1386,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           assets: (collection.assets || []).map(replaceAsset),
         })))
         setPreviewAsset((current) => current?.id === updatedAsset.id ? { ...current, ...updatedAsset } : current)
+        setReplacementFile(null)
         showNotice('Asset saved.')
       } else {
         const newAsset = mapApiAsset(data)
@@ -1355,6 +1397,44 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       setMetadataAsset(null)
     } catch (error) {
       showNotice(error.message || 'Unable to save asset metadata.')
+    } finally {
+      setIsSavingMetadata(false)
+    }
+  }
+
+  const restoreAssetVersion = async (version) => {
+    if (!metadataAsset || !version) return
+    setIsSavingMetadata(true)
+    try {
+      const response = await apiRequest(
+        `/api/assets/${metadataAsset.id}/versions/${version.id}/restore/`,
+        { method: 'POST' },
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to restore this version.')
+
+      const restoredAsset = mapApiAsset(data)
+      const replaceAsset = (asset) => asset.id === restoredAsset.id ? { ...asset, ...restoredAsset } : asset
+      setAssets((current) => current.map(replaceAsset))
+      setTrashAssets((current) => current.map(replaceAsset))
+      setCollections((current) => current.map((collection) => ({
+        ...collection,
+        assets: (collection.assets || []).map(replaceAsset),
+      })))
+      setPreviewAsset((current) => current?.id === restoredAsset.id ? { ...current, ...restoredAsset } : current)
+      setMetadataAsset(restoredAsset)
+      setMetadataForm(metadataFormFromAsset(restoredAsset))
+      setEditedDrawingDataUrl(restoredAsset.metadata?.doodle_image_data_url || '')
+
+      const versionsResponse = await apiRequest(`/api/assets/${restoredAsset.id}/versions/`)
+      const versionsData = await versionsResponse.json().catch(() => [])
+      if (versionsResponse.ok) {
+        setAssetVersions(versionsData)
+        setSelectedVersionId(versionsData[0]?.id || '')
+      }
+      showNotice(`Version ${version.version_number} restored.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to restore this version.')
     } finally {
       setIsSavingMetadata(false)
     }
@@ -1948,6 +2028,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         asset={metadataAsset}
         form={metadataForm}
         isSaving={isSavingMetadata}
+        versions={assetVersions}
+        selectedVersionId={selectedVersionId}
+        onSelectVersion={setSelectedVersionId}
+        onRestoreVersion={restoreAssetVersion}
+        isLoadingVersions={isLoadingVersions}
+        replacementFile={replacementFile}
+        onReplacementFileChange={setReplacementFile}
+        apiRequest={apiRequest}
         title="Edit asset"
         description="Update asset details and its canvas drawing."
         onChange={setMetadataForm}
@@ -1955,7 +2043,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         onSubmit={(event) => saveAssetMetadata(event, 'overwrite')}
         onPreview={() => metadataAsset && openAssetPreview(metadataAsset)}
         onSaveAs={(event) => saveAssetMetadata(event, 'copy')}
-        canvasEditor={metadataAsset.metadata?.doodle_image_data_url ? <DoodleCanvas
+        canvasEditor={metadataAsset.metadata?.doodle_image_data_url && !replacementFile ? <DoodleCanvas
           key={`asset-canvas-${metadataAsset.id}`}
           initialDataUrl={metadataAsset.metadata.doodle_image_data_url}
           onDrawingChange={setEditedDrawingDataUrl}

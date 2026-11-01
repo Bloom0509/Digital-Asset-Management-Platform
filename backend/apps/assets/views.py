@@ -1,9 +1,11 @@
+import json
 import mimetypes
 import uuid
 from io import BytesIO
 from pathlib import Path
 
 from django.core.files.base import ContentFile
+from django.db.models import Max
 from django.http import FileResponse, HttpResponse
 from django.db import transaction
 from django.utils import timezone
@@ -20,8 +22,8 @@ from apps.tenants.models import Membership, Tenant
 from apps.tenants.activity import record_activity
 from apps.tenants.permissions import WorkspaceRolePermission
 
-from .models import Asset, compute_file_hash
-from .serializers import AssetSerializer, AssetUploadSerializer, BulkAssetMetadataSerializer
+from .models import Asset, AssetVersion, compute_file_hash
+from .serializers import AssetSerializer, AssetUploadSerializer, AssetVersionSerializer, BulkAssetMetadataSerializer
 
 
 class OptionalJWTAuthentication(JWTAuthentication):
@@ -34,6 +36,38 @@ class OptionalJWTAuthentication(JWTAuthentication):
 
 class AssetViewSet(viewsets.ModelViewSet):
     serializer_class = AssetSerializer
+
+    def _snapshot_asset(self, asset, user):
+        if not asset.file:
+            return None
+
+        latest_version = asset.versions.aggregate(max_number=Max("version_number"))["max_number"] or 0
+        version = AssetVersion(
+            asset=asset,
+            version_number=latest_version + 1,
+            uploaded_by=user,
+            name=asset.name,
+            content_type=asset.content_type,
+            size_bytes=asset.size_bytes,
+            file_hash=asset.file_hash,
+            metadata=asset.metadata,
+            tags=asset.tags,
+            description=asset.description,
+            alt_text=asset.alt_text,
+            creator=asset.creator,
+            campaign=asset.campaign,
+            license=asset.license,
+            custom_fields=asset.custom_fields,
+        )
+        with asset.file.open("rb") as current_file:
+            version.file.save(Path(asset.file.name).name, current_file, save=False)
+        version.save()
+        return version
+
+    @staticmethod
+    def _delete_file_after_commit(storage, file_name):
+        if file_name:
+            transaction.on_commit(lambda: storage.delete(file_name))
 
     def get_authenticators(self):
         if self.request.method == 'GET':
@@ -93,6 +127,9 @@ class AssetViewSet(viewsets.ModelViewSet):
     def permanent_delete(self, request, pk=None):
         asset = self.get_object()
         record_activity(asset.tenant, request.user, f'Permanently deleted “{asset.name}”.')
+        for version in asset.versions.all():
+            if version.file:
+                version.file.delete(save=False)
         if asset.file:
             asset.file.delete(save=False)
         asset.delete()
@@ -156,6 +193,145 @@ class AssetViewSet(viewsets.ModelViewSet):
             f'Created a new asset copy from “{asset.name}”.',
         )
         return Response(self.get_serializer(duplicate_asset).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='versions')
+    def versions(self, request, pk=None):
+        asset = self.get_object()
+        serializer = AssetVersionSerializer(asset.versions.all(), many=True)
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='replace-file',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def replace_file(self, request, pk=None):
+        asset = self.get_object()
+        uploaded_file = request.data.get('file')
+        if uploaded_file is None:
+            return Response({'file': ['A replacement file is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        upload_serializer = AssetUploadSerializer(data={'file': uploaded_file, 'name': asset.name})
+        upload_serializer.is_valid(raise_exception=True)
+        uploaded_file = upload_serializer.validated_data['file']
+        metadata_payload = {}
+        raw_metadata = request.data.get('metadata')
+        if raw_metadata:
+            try:
+                metadata_payload = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+            except (TypeError, json.JSONDecodeError) as exc:
+                return Response({'metadata': ['Provide valid JSON metadata.']}, status=status.HTTP_400_BAD_REQUEST)
+            if not isinstance(metadata_payload, dict):
+                return Response({'metadata': ['Provide a JSON object.']}, status=status.HTTP_400_BAD_REQUEST)
+        metadata_serializer = AssetSerializer(
+            asset,
+            data=metadata_payload,
+            partial=True,
+            context=self.get_serializer_context(),
+        )
+        metadata_serializer.is_valid(raise_exception=True)
+        file_hash = compute_file_hash(uploaded_file)
+        duplicate = Asset.objects.filter(
+            tenant=asset.tenant,
+            file_hash=file_hash,
+            deleted_at__isnull=True,
+        ).exclude(pk=asset.pk).first()
+        if duplicate:
+            return Response(
+                {'detail': f'This file already exists in this workspace as “{duplicate.name}”.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        old_file_name = asset.file.name if asset.file else None
+        old_storage = asset.file.storage if asset.file else None
+        extension = Path(uploaded_file.name).suffix.lower()
+        content_type = mimetypes.guess_type(uploaded_file.name)[0] or 'application/octet-stream'
+
+        with transaction.atomic():
+            self._snapshot_asset(asset, request.user)
+            asset.file.save(uploaded_file.name, uploaded_file, save=False)
+            asset.object_key = asset.file.name
+            asset.content_type = content_type
+            asset.size_bytes = uploaded_file.size
+            asset.file_hash = file_hash
+            for field, value in metadata_serializer.validated_data.items():
+                setattr(asset, field, value)
+            asset.size_bytes = uploaded_file.size
+            asset.metadata = {
+                **(asset.metadata or {}),
+                'original_filename': Path(uploaded_file.name).name,
+                'type': extension.lstrip('.').upper(),
+            }
+            asset.save(update_fields=[
+                'file', 'object_key', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'updated_at',
+            ])
+            self._delete_file_after_commit(old_storage, old_file_name)
+
+        record_activity(asset.tenant, request.user, f'Replaced the file for “{asset.name}”.')
+        return Response(self.get_serializer(asset).data)
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'versions/(?P<version_id>[^/.]+)/file',
+    )
+    def version_file(self, request, pk=None, version_id=None):
+        asset = self.get_object()
+        version = asset.versions.filter(pk=version_id).first()
+        if version is None:
+            return Response({'detail': 'Asset version not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        safe_inline_types = {
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
+            'video/mp4', 'video/webm', 'video/quicktime',
+        }
+        response = FileResponse(
+            version.file.open('rb'),
+            as_attachment=version.content_type not in safe_inline_types,
+            filename=Path(version.name).name,
+            content_type=version.content_type,
+        )
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Content-Security-Policy'] = "default-src 'none'; sandbox"
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'versions/(?P<version_id>[^/.]+)/restore',
+    )
+    def restore_version(self, request, pk=None, version_id=None):
+        asset = self.get_object()
+        version = asset.versions.filter(pk=version_id).first()
+        if version is None:
+            return Response({'detail': 'Asset version not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        old_file_name = asset.file.name if asset.file else None
+        old_storage = asset.file.storage if asset.file else None
+        with transaction.atomic():
+            self._snapshot_asset(asset, request.user)
+            with version.file.open('rb') as version_file:
+                asset.file.save(Path(version.file.name).name, version_file, save=False)
+            for field in (
+                'name', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'tags', 'description',
+                'alt_text', 'creator', 'campaign', 'license', 'custom_fields',
+            ):
+                setattr(asset, field, getattr(version, field))
+            asset.object_key = asset.file.name
+            asset.save(update_fields=[
+                'file', 'object_key', 'name', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'tags',
+                'description', 'alt_text', 'creator', 'campaign', 'license', 'custom_fields', 'updated_at',
+            ])
+            self._delete_file_after_commit(old_storage, old_file_name)
+
+        record_activity(
+            asset.tenant,
+            request.user,
+            f'Restored version {version.version_number} of “{asset.name}”.',
+        )
+        return Response(self.get_serializer(asset).data)
 
     @action(detail=False, methods=['post'], url_path='bulk-metadata')
     def bulk_metadata(self, request):

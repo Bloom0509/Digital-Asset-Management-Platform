@@ -11,6 +11,7 @@ from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from apps.assets.models import AssetVersion
 from apps.tenants.models import ActivityEvent
 
 
@@ -467,3 +468,86 @@ class AssetAccessTests(TestCase):
         other_client.force_authenticate(user=other_user)
         self.assertEqual(other_client.get(reverse("asset-trash")).json(), [])
         self.assertEqual(other_client.post(reverse("asset-restore", args=[asset_id])).status_code, 404)
+
+    def test_replacing_and_restoring_asset_files_preserves_versions_and_metadata(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                user = get_user_model().objects.create_user(
+                    username=f"asset-version-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                client = APIClient()
+                client.force_authenticate(user=user)
+                create_response = client.post(
+                    "/api/assets/upload/",
+                    {
+                        "file": SimpleUploadedFile("original.txt", b"original bytes", content_type="text/plain"),
+                        "tags": json.dumps(["original"]),
+                        "description": "Original description",
+                    },
+                    format="multipart",
+                )
+                self.assertEqual(create_response.status_code, 201, create_response.content)
+                asset_id = create_response.json()["id"]
+
+                metadata_response = client.patch(
+                    reverse("asset-detail", args=[asset_id]),
+                    {
+                        "tags": ["current"],
+                        "description": "Current description",
+                        "metadata": {"doodle_image_data_url": "data:image/png;base64,Zm9v", "source": "canvas"},
+                    },
+                    format="json",
+                )
+                self.assertEqual(metadata_response.status_code, 200, metadata_response.content)
+                self.assertEqual(client.get(f"/api/assets/{asset_id}/versions/").json(), [])
+
+                replace_response = client.post(
+                    f"/api/assets/{asset_id}/replace-file/",
+                    {
+                        "file": SimpleUploadedFile("replacement.txt", b"replacement bytes", content_type="text/plain"),
+                        "metadata": json.dumps({"metadata": {"source": "replacement"}}),
+                    },
+                    format="multipart",
+                )
+                self.assertEqual(replace_response.status_code, 200, replace_response.content)
+                self.assertEqual(replace_response.json()["size_bytes"], len(b"replacement bytes"))
+                self.assertEqual(b"".join(client.get(replace_response.json()["file_url"]).streaming_content), b"replacement bytes")
+
+                versions_response = client.get(f"/api/assets/{asset_id}/versions/")
+                self.assertEqual(versions_response.status_code, 200)
+                versions = versions_response.json()
+                self.assertEqual(len(versions), 1)
+                first_version = versions[0]
+                self.assertEqual(first_version["version_number"], 1)
+                self.assertEqual(first_version["tags"], ["current"])
+                self.assertEqual(first_version["description"], "Current description")
+                self.assertEqual(first_version["metadata"]["source"], "canvas")
+                self.assertIn("doodle_image_data_url", first_version["metadata"])
+                self.assertEqual(b"".join(client.get(first_version["file_url"]).streaming_content), b"original bytes")
+                self.assertEqual(replace_response.json()["metadata"], {"source": "replacement", "original_filename": "replacement.txt", "type": "TXT"})
+
+                client.patch(
+                    reverse("asset-detail", args=[asset_id]),
+                    {"tags": ["later"], "description": "Later metadata"},
+                    format="json",
+                )
+                restore_response = client.post(
+                    f"/api/assets/{asset_id}/versions/{first_version['id']}/restore/",
+                    format="json",
+                )
+
+                self.assertEqual(restore_response.status_code, 200, restore_response.content)
+                self.assertEqual(restore_response.json()["tags"], ["current"])
+                self.assertEqual(restore_response.json()["description"], "Current description")
+                self.assertEqual(restore_response.json()["size_bytes"], len(b"original bytes"))
+                self.assertEqual(b"".join(client.get(restore_response.json()["file_url"]).streaming_content), b"original bytes")
+                restored_history = client.get(f"/api/assets/{asset_id}/versions/").json()
+                self.assertEqual([version["version_number"] for version in restored_history], [2, 1])
+                self.assertEqual(restored_history[0]["tags"], ["later"])
+
+                version_paths = list(AssetVersion.objects.filter(asset_id=asset_id).values_list("file", flat=True))
+                active_path = client.get(reverse("asset-detail", args=[asset_id])).json()["object_key"]
+                self.assertEqual(client.delete(reverse("asset-detail", args=[asset_id])).status_code, 204)
+                self.assertEqual(client.delete(reverse("asset-permanent-delete", args=[asset_id])).status_code, 204)
+                for stored_path in [*version_paths, active_path]:
+                    self.assertFalse(Path(media_root, stored_path).exists())
