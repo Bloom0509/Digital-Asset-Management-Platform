@@ -1116,6 +1116,42 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   overflow-y: auto;
 }
 
+.bulk-import-modal {
+  display: grid;
+  gap: 18px;
+  width: min(560px, 92vw);
+}
+
+.bulk-import-modal .asset-modal-copy {
+  margin: 0;
+}
+
+.bulk-import-picker {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bulk-import-picker input {
+  max-width: 100%;
+  color: var(--text);
+  font: 400 12px Arial, sans-serif;
+}
+
+.bulk-import-picker small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .metadata-modal .asset-modal-copy {
   margin-bottom: 22px;
 }

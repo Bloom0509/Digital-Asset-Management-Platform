@@ -107,6 +107,49 @@ export function AssetGrid({
   )
 }
 
+export function BulkImportModal({ files, manifest, isImporting, onFilesChange, onManifestChange, onImport, onClose }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="asset-modal bulk-import-modal" onClick={(event) => event.stopPropagation()} aria-labelledby="bulk-import-title">
+        <button className="modal-close" type="button" onClick={onClose} disabled={isImporting} aria-label="Close bulk import">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">LIBRARY TRANSFER</p>
+          <h3 id="bulk-import-title">Import assets</h3>
+          <p>Import a folder with an optional metadata manifest, or import an exported CSV to update existing asset metadata.</p>
+        </div>
+        <label className="bulk-import-picker">
+          <span>Asset folder</span>
+          <input
+            type="file"
+            multiple
+            webkitdirectory=""
+            directory=""
+            onChange={(event) => onFilesChange(Array.from(event.target.files || []))}
+            disabled={isImporting}
+          />
+          <small>{files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : 'Select a folder to import its files.'}</small>
+        </label>
+        <label className="bulk-import-picker">
+          <span>Metadata manifest (CSV, optional)</span>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => onManifestChange(event.target.files?.[0] || null)}
+            disabled={isImporting}
+          />
+          <small>{manifest ? manifest.name : 'Folder manifests use filename and metadata columns. Metadata-only imports use the exported id column.'}</small>
+        </label>
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isImporting}>Cancel</button>
+          <button type="button" className="upload create-submit" onClick={onImport} disabled={isImporting || (!files.length && !manifest)}>
+            {isImporting ? 'Importing…' : files.length ? `Import ${files.length} assets` : 'Update from CSV'}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function ToastNotification({ message, onDismiss }) {
   if (!message) return null
 

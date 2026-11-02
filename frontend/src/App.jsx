@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkAssetMetadataModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -88,6 +88,156 @@ const parseMetadataForm = (form) => {
     license: form.license.trim(),
     custom_fields: customFields,
   }
+}
+
+const parseCsv = (source) => {
+  const csvSource = source.replace(/^\uFEFF/, '')
+  const rows = []
+  let row = []
+  let value = ''
+  let quoted = false
+
+  for (let index = 0; index < csvSource.length; index += 1) {
+    const character = csvSource[index]
+    if (quoted) {
+      if (character === '"' && csvSource[index + 1] === '"') {
+        value += '"'
+        index += 1
+      } else if (character === '"') {
+        quoted = false
+      } else {
+        value += character
+      }
+    } else if (character === '"' && value.length === 0) {
+      quoted = true
+    } else if (character === ',') {
+      row.push(value)
+      value = ''
+    } else if (character === '\n' || character === '\r') {
+      if (character === '\r' && csvSource[index + 1] === '\n') index += 1
+      row.push(value)
+      rows.push(row)
+      row = []
+      value = ''
+    } else {
+      value += character
+    }
+  }
+
+  if (quoted) throw new Error('The CSV manifest contains an unclosed quoted field.')
+  if (value.length || row.length) {
+    row.push(value)
+    rows.push(row)
+  }
+
+  const headers = rows.shift()?.map((header) => header.trim().toLowerCase().replace(/[\s-]+/g, '_')) || []
+  if (!headers.length) throw new Error('The CSV manifest is empty.')
+  return rows
+    .filter((record) => record.some((field) => field.trim()))
+    .map((record) => Object.fromEntries(headers.map((header, index) => [header, record[index]?.trim() || ''])))
+}
+
+const parseImportManifest = (source, files) => {
+  const rows = parseCsv(source)
+  const filenameColumn = ['filename', 'file', 'path', 'relative_path'].find((column) => Object.hasOwn(rows[0] || {}, column))
+  if (!filenameColumn) throw new Error('The CSV manifest needs a filename or relative_path column.')
+
+  const filesByPath = new Map()
+  const filesByName = new Map()
+  for (const file of files) {
+    const relativePath = file.webkitRelativePath || file.name
+    filesByPath.set(relativePath.toLocaleLowerCase(), file)
+    const nameKey = file.name.toLocaleLowerCase()
+    filesByName.set(nameKey, [...(filesByName.get(nameKey) || []), file])
+  }
+
+  const metadataByFile = new Map()
+  for (const row of rows) {
+    const filename = row[filenameColumn]
+    if (!filename) continue
+    const file = filesByPath.get(filename.toLocaleLowerCase())
+    const nameMatches = filesByName.get(filename.toLocaleLowerCase()) || []
+    const matchedFile = file || (nameMatches.length === 1 ? nameMatches[0] : null)
+    if (!matchedFile) {
+      throw new Error(nameMatches.length > 1
+        ? `Use a relative_path to distinguish duplicate filenames: ${filename}.`
+        : `The manifest file was not selected: ${filename}.`)
+    }
+    if (metadataByFile.has(matchedFile)) throw new Error(`The manifest contains multiple rows for ${filename}.`)
+
+    let customFields = {}
+    if (row.custom_fields) {
+      try {
+        customFields = JSON.parse(row.custom_fields)
+      } catch {
+        throw new Error(`Custom fields for ${filename} must be a JSON object.`)
+      }
+      if (!customFields || Array.isArray(customFields) || typeof customFields !== 'object') {
+        throw new Error(`Custom fields for ${filename} must be a JSON object.`)
+      }
+    }
+    metadataByFile.set(matchedFile, {
+      name: row.name || '',
+      tags: (row.tags || '').split(/[;|]/).map((tag) => tag.trim()).filter(Boolean),
+      description: row.description || '',
+      alt_text: row.alt_text || '',
+      creator: row.creator || '',
+      campaign: row.campaign || '',
+      license: row.license || '',
+      custom_fields: customFields,
+    })
+  }
+  return metadataByFile
+}
+
+const parseMetadataCsv = (source) => {
+  const rows = parseCsv(source)
+  if (!rows.length || !Object.hasOwn(rows[0], 'id')) {
+    throw new Error('To update existing assets from CSV, include the exported id column.')
+  }
+  const availableFields = ['tags', 'description', 'alt_text', 'creator', 'campaign', 'license', 'custom_fields']
+  const fields = availableFields.filter((field) => Object.hasOwn(rows[0], field))
+  if (!fields.length) throw new Error('The CSV needs at least one asset metadata column.')
+
+  const perAssetMetadata = {}
+  for (const row of rows) {
+    const assetId = row.id.trim()
+    if (!assetId) continue
+    if (Object.hasOwn(perAssetMetadata, assetId)) throw new Error(`The CSV contains multiple rows for asset ${assetId}.`)
+
+    const metadata = {}
+    for (const field of fields) {
+      if (field === 'tags') {
+        metadata.tags = (row.tags || '').split(/[;|]/).map((tag) => tag.trim()).filter(Boolean)
+      } else if (field === 'custom_fields') {
+        if (!row.custom_fields) {
+          metadata.custom_fields = {}
+        } else {
+          try {
+            metadata.custom_fields = JSON.parse(row.custom_fields)
+          } catch {
+            throw new Error(`Custom fields for asset ${assetId} must be a JSON object.`)
+          }
+          if (!metadata.custom_fields || Array.isArray(metadata.custom_fields) || typeof metadata.custom_fields !== 'object') {
+            throw new Error(`Custom fields for asset ${assetId} must be a JSON object.`)
+          }
+        }
+      } else {
+        metadata[field] = row[field] || ''
+      }
+    }
+    perAssetMetadata[assetId] = metadata
+  }
+
+  const assetIds = Object.keys(perAssetMetadata)
+  if (!assetIds.length) throw new Error('The CSV contains no asset rows to import.')
+  return { assetIds, perAssetMetadata }
+}
+
+const escapeCsvValue = (value) => {
+  let text = String(value ?? '')
+  if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`
+  return `"${text.replaceAll('"', '""')}"`
 }
 
 const metadataFormFromAsset = (asset) => ({
@@ -483,6 +633,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [pendingUploadFiles, setPendingUploadFiles] = useState([])
   const [uploadMetadataForm, setUploadMetadataForm] = useState(emptyMetadataForm)
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
+  const [bulkImportOpen, setBulkImportOpen] = useState(false)
+  const [bulkImportFiles, setBulkImportFiles] = useState([])
+  const [bulkImportManifest, setBulkImportManifest] = useState(null)
+  const [isBulkImporting, setIsBulkImporting] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState(null)
   const [drawingDataUrl, setDrawingDataUrl] = useState('')
   const [editedDrawingDataUrl, setEditedDrawingDataUrl] = useState('')
@@ -1448,22 +1602,27 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     setUploadMetadataForm(emptyMetadataForm)
   }
 
-  const uploadFiles = async (files, metadata) => {
-    const queue = files.map((file) => ({ id: crypto.randomUUID(), file, name: file.name }))
+  const uploadFiles = async (files, metadata, metadataByFile = new Map()) => {
+    const queue = files.map((file) => {
+      const fileMetadata = metadataByFile.get(file)
+      return { id: crypto.randomUUID(), file, metadata: fileMetadata, name: fileMetadata?.name || file.name }
+    })
     setUploadItems((current) => [...queue.map(({ id, name }) => ({ id, name, progress: 0, status: 'queued' })), ...current])
     setIsUploadingFiles(true)
 
-    const uploadOne = ({ id, file }) => new Promise((resolve, reject) => {
+    const uploadOne = ({ id, file, metadata: fileMetadata }) => new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       const formData = new FormData()
+      const uploadMetadata = fileMetadata || metadata
       formData.append('file', file)
-      formData.append('tags', JSON.stringify(metadata.tags))
-      formData.append('description', metadata.description)
-      formData.append('alt_text', metadata.alt_text)
-      formData.append('creator', metadata.creator)
-      formData.append('campaign', metadata.campaign)
-      formData.append('license', metadata.license)
-      formData.append('custom_fields', JSON.stringify(metadata.custom_fields))
+      formData.append('name', uploadMetadata.name || file.name)
+      formData.append('tags', JSON.stringify(uploadMetadata.tags))
+      formData.append('description', uploadMetadata.description)
+      formData.append('alt_text', uploadMetadata.alt_text)
+      formData.append('creator', uploadMetadata.creator)
+      formData.append('campaign', uploadMetadata.campaign)
+      formData.append('license', uploadMetadata.license)
+      formData.append('custom_fields', JSON.stringify(uploadMetadata.custom_fields))
       xhr.open('POST', '/api/assets/upload/')
       const token = window.localStorage.getItem('dam_token')
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
@@ -1511,10 +1670,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       const firstFailure = failedResults[0]?.error || 'Upload failed.'
       const failureMessage = failures === 1 ? firstFailure : `${failures} uploads failed. ${firstFailure}`
       showNotice(failureMessage)
-      return
+      return { completed, failures }
     }
 
     showNotice(`${completed} file${completed === 1 ? '' : 's'} uploaded.`)
+    return { completed, failures }
   }
 
   const submitUploadMetadata = async (event) => {
@@ -1527,6 +1687,96 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       return
     }
     await uploadFiles(pendingUploadFiles, metadata)
+  }
+
+  const importFolderAssets = async () => {
+    if (!bulkImportFiles.length && !bulkImportManifest) return
+    setIsBulkImporting(true)
+    try {
+      if (!bulkImportFiles.length && bulkImportManifest) {
+        const { assetIds, perAssetMetadata } = parseMetadataCsv(await bulkImportManifest.text())
+        const response = await apiRequest('/api/assets/bulk-metadata/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asset_ids: assetIds, per_asset_metadata: perAssetMetadata }),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const detail = data?.detail || Object.values(data || {}).flat()?.[0]
+          throw new Error(detail || 'Unable to update assets from this CSV.')
+        }
+
+        const updatedById = new Map(data.assets.map((asset) => [asset.id, mapApiAsset(asset)]))
+        const mergeUpdatedAsset = (asset) => updatedById.has(asset.id)
+          ? { ...asset, ...updatedById.get(asset.id) }
+          : asset
+        setAssets((current) => current.map(mergeUpdatedAsset))
+        setTrashAssets((current) => current.map(mergeUpdatedAsset))
+        setCollections((current) => current.map((collection) => ({
+          ...collection,
+          assets: (collection.assets || []).map(mergeUpdatedAsset),
+        })))
+        showNotice(`${data.updated} asset${data.updated === 1 ? '' : 's'} updated from CSV.`)
+      } else {
+        const metadataByFile = bulkImportManifest
+          ? parseImportManifest(await bulkImportManifest.text(), bulkImportFiles)
+          : new Map()
+        const emptyMetadata = {
+          tags: [],
+          description: '',
+          alt_text: '',
+          creator: '',
+          campaign: '',
+          license: '',
+          custom_fields: {},
+        }
+        await uploadFiles(bulkImportFiles, emptyMetadata, metadataByFile)
+      }
+      setBulkImportOpen(false)
+      setBulkImportFiles([])
+      setBulkImportManifest(null)
+    } catch (error) {
+      showNotice(error.message || 'Unable to import this folder.')
+    } finally {
+      setIsBulkImporting(false)
+    }
+  }
+
+  const exportAssetsCsv = () => {
+    const assetsToExport = selectedAssets.length ? selectedAssets : currentAssets
+    if (!assetsToExport.length) {
+      showNotice('There are no assets to export.')
+      return
+    }
+
+    const columns = [
+      'id', 'filename', 'name', 'content_type', 'size_bytes', 'tags', 'description', 'alt_text',
+      'creator', 'campaign', 'license', 'custom_fields', 'created_at', 'updated_at',
+    ]
+    const rows = assetsToExport.map((asset) => [
+      asset.id,
+      asset.metadata?.original_filename || asset.name,
+      asset.name,
+      asset.content_type,
+      asset.size_bytes,
+      (asset.tags || []).join('; '),
+      asset.description,
+      asset.alt_text,
+      asset.creator,
+      asset.campaign,
+      asset.license,
+      JSON.stringify(asset.custom_fields || {}),
+      asset.created_at,
+      asset.updated_at,
+    ])
+    const csv = [columns, ...rows].map((row) => row.map(escapeCsvValue).join(',')).join('\r\n')
+    const blobUrl = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
+    const downloadLink = document.createElement('a')
+    downloadLink.href = blobUrl
+    downloadLink.download = 'digital-asset-library.csv'
+    downloadLink.click()
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
+    showNotice(`${assetsToExport.length} asset${assetsToExport.length === 1 ? '' : 's'} exported.`)
   }
 
   const handleCreateCustomAsset = async () => {
@@ -1649,6 +1899,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <button className="icon-button" type="button" onClick={() => showNotice('You are all caught up.')} aria-label="Notifications">o</button>
             <input ref={fileInput} type="file" multiple hidden accept=".jpg,.jpeg,.png,.gif,.webp,.avif,.mp4,.webm,.mov,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={handleFiles} />
             {activeSection === 'collections' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
+            {(activeSection === 'assets' || activeSection === 'collection') && <button className="ghost" type="button" onClick={exportAssetsCsv}>Export CSV</button>}
+            {activeSection === 'assets' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => { setBulkImportFiles([]); setBulkImportManifest(null); setBulkImportOpen(true) }}>Import folder</button>}
             {activeSection !== 'collections' && activeSection !== 'collection' && canManageWorkspace && <>
               <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
               <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
@@ -2014,6 +2266,15 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         </div>
       )}
       <AssetPreviewModal asset={previewAsset} onClose={closeAssetPreview} />
+      {bulkImportOpen && <BulkImportModal
+        files={bulkImportFiles}
+        manifest={bulkImportManifest}
+        isImporting={isBulkImporting || isUploadingFiles}
+        onFilesChange={setBulkImportFiles}
+        onManifestChange={setBulkImportManifest}
+        onImport={importFolderAssets}
+        onClose={() => { if (!isBulkImporting && !isUploadingFiles) setBulkImportOpen(false) }}
+      />}
       {pendingUploadFiles.length > 0 && <AssetMetadataModal
         form={uploadMetadataForm}
         isSaving={isUploadingFiles}
