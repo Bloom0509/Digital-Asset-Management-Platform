@@ -20,6 +20,87 @@ export function UploadQueue({ items, onClearFinished }) {
   )
 }
 
+const formatStorageSize = (sizeBytes) => {
+  const bytes = Number(sizeBytes || 0)
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+export function StorageReport({ data, period, isLoading, error, onPeriodChange, onRetry }) {
+  const maximumTypeBytes = Math.max(1, ...(data?.by_type || []).map((item) => item.total_bytes))
+  const maximumPeriodBytes = Math.max(1, ...(data?.timeline || []).map((item) => item.total_bytes))
+  const periods = [
+    { value: '7d', label: '7 days' },
+    { value: '30d', label: '30 days' },
+    { value: '90d', label: '90 days' },
+    { value: '365d', label: '12 months' },
+  ]
+
+  return (
+    <section className="storage-report" aria-labelledby="storage-report-title" aria-busy={isLoading}>
+      <header className="storage-report-heading">
+        <div>
+          <h2 id="storage-report-title">Storage report</h2>
+          <span>{data?.workspace?.name || 'Current workspace'} · includes files in Trash</span>
+        </div>
+        <label>
+          <span>Upload period</span>
+          <select value={period} onChange={(event) => onPeriodChange(event.target.value)}>
+            {periods.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+      </header>
+
+      {error ? (
+        <div className="storage-report-error" role="alert">
+          <span>{error}</span>
+          <button type="button" className="filter-reset" onClick={onRetry}>Retry</button>
+        </div>
+      ) : !data && isLoading ? (
+        <p className="storage-report-status" role="status">Loading workspace storage…</p>
+      ) : data ? (
+        <>
+          <div className="storage-report-stats">
+            <div><span>Total stored</span><strong>{formatStorageSize(data.total_bytes)}</strong></div>
+            <div><span>Files stored</span><strong>{data.asset_count.toLocaleString()}</strong></div>
+            <div><span>Uploaded in period</span><strong>{formatStorageSize(data.period_bytes)}</strong><small>{data.period_asset_count.toLocaleString()} files</small></div>
+          </div>
+
+          <div className="storage-report-breakdowns">
+            <section aria-labelledby="storage-types-title">
+              <h3 id="storage-types-title">By file type</h3>
+              {data.by_type.length ? <ul className="storage-type-list">
+                {data.by_type.map((item) => (
+                  <li key={item.content_type}>
+                    <div className="storage-type-label"><strong>{item.type}</strong><span>{formatStorageSize(item.total_bytes)} · {item.asset_count} files</span></div>
+                    <div className="storage-type-track"><span style={{ width: `${(item.total_bytes / maximumTypeBytes) * 100}%` }} /></div>
+                  </li>
+                ))}
+              </ul> : <p className="storage-report-status">No stored files in this workspace.</p>}
+            </section>
+
+            <section aria-labelledby="storage-period-title">
+              <h3 id="storage-period-title">Uploads over time</h3>
+              {data.timeline.length ? <>
+                <div className="storage-timeline" role="img" aria-label={`Storage added per time bucket over the last ${periods.find((option) => option.value === period)?.label}`}>
+                  {data.timeline.map((item) => (
+                    <div className="storage-timeline-column" key={item.date} title={`${item.date}: ${formatStorageSize(item.total_bytes)}, ${item.asset_count} files`}>
+                      <span style={{ height: `${Math.max(4, (item.total_bytes / maximumPeriodBytes) * 100)}%` }} />
+                    </div>
+                  ))}
+                </div>
+                <div className="storage-timeline-labels"><span>{data.timeline[0].date}</span><span>{data.timeline[data.timeline.length - 1].date}</span></div>
+              </> : <p className="storage-report-status">No uploads during this period.</p>}
+            </section>
+          </div>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
 export function ActivityFeed({ activities }) {
   if (!activities.length) {
     return <div className="empty activity-empty"><strong>No activity yet</strong><span>Actions in your workspace will appear here in real time.</span></div>

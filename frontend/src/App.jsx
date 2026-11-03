@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -589,6 +589,18 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     minSize: '',
     maxSize: '',
   })
+  const [savedSearches, setSavedSearches] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(`dam_saved_searches_${currentWorkspace?.id || ''}`)
+      const parsed = saved ? JSON.parse(saved) : []
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
+  const [selectedSavedSearchId, setSelectedSavedSearchId] = useState('')
+  const [isNamingSavedSearch, setIsNamingSavedSearch] = useState(false)
+  const [savedSearchName, setSavedSearchName] = useState('')
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [view, setView] = useState('grid')
   const [selected, setSelected] = useState([])
@@ -602,6 +614,11 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const starred = starredByWorkspace[currentWorkspace?.id] || []
   const [activities, setActivities] = useState([])
   const [notice, setNotice] = useState('')
+  const [storagePeriod, setStoragePeriod] = useState('30d')
+  const [storageReport, setStorageReport] = useState(null)
+  const [isLoadingStorageReport, setIsLoadingStorageReport] = useState(true)
+  const [storageReportError, setStorageReportError] = useState('')
+  const [storageReportRequest, setStorageReportRequest] = useState(0)
   const [uploadItems, setUploadItems] = useState([])
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
@@ -761,6 +778,30 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     return () => { cancelled = true }
   }, [apiRequest, currentWorkspace?.id])
 
+  useEffect(() => {
+    if (!currentWorkspace?.id) return undefined
+    let cancelled = false
+    apiRequest(`/api/assets/storage-usage/?period=${storagePeriod}`)
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data?.detail || 'Unable to load storage usage.')
+        return data
+      })
+      .then((data) => {
+        if (cancelled) return
+        setStorageReport(data)
+        setStorageReportError('')
+      })
+      .catch((error) => {
+        if (!cancelled) setStorageReportError(error.message || 'Unable to load storage usage.')
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingStorageReport(false)
+      })
+
+    return () => { cancelled = true }
+  }, [apiRequest, currentWorkspace?.id, storagePeriod, storageReportRequest])
+
   const protectedFileUrls = [...assets, ...trashAssets, ...collections.flatMap((collection) => collection.assets || [])]
     .filter((asset) => asset.thumbnail_url)
     .map((asset) => `${asset.thumbnail_url}\t${asset.updated_at || ''}`)
@@ -912,6 +953,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       return { activeSection: 'activity', activeCollectionId: null }
     }
 
+    if (path === '/storage') {
+      return { activeSection: 'storage', activeCollectionId: null }
+    }
+
     if (path.startsWith('/collections/') || path.startsWith('/collection/')) {
       const collectionId = path.replace(/^\/collections?\//, '').split('/')[0]
       return { activeSection: 'collection', activeCollectionId: collectionId || null }
@@ -922,10 +967,76 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
   const activeSection = routeState.activeSection
   const activeCollectionId = routeState.activeCollectionId
+  const showAssetControls = ['assets', 'trash', 'collection'].includes(activeSection)
 
   useEffect(() => {
     window.localStorage.setItem('dam_favorites_by_workspace', JSON.stringify(starredByWorkspace))
   }, [starredByWorkspace])
+
+  useEffect(() => {
+    if (!currentWorkspace?.id) return
+    window.localStorage.setItem(`dam_saved_searches_${currentWorkspace.id}`, JSON.stringify(savedSearches))
+  }, [currentWorkspace?.id, savedSearches])
+
+  const saveCurrentSearch = (event) => {
+    event.preventDefault()
+    const name = savedSearchName.trim()
+    if (!name) {
+      showNotice('Enter a name for this saved view.')
+      return
+    }
+    if (savedSearches.some((savedSearch) => savedSearch.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      showNotice('A saved view with that name already exists.')
+      return
+    }
+
+    const savedSearch = {
+      id: crypto.randomUUID(),
+      name,
+      query,
+      filter,
+      sort,
+      advancedFilters: { ...advancedFilters },
+      view,
+    }
+    setSavedSearches((current) => [savedSearch, ...current])
+    setSelectedSavedSearchId(savedSearch.id)
+    setSavedSearchName('')
+    setIsNamingSavedSearch(false)
+    showNotice(`Saved view “${name}”.`)
+  }
+
+  const applySavedSearch = (savedSearchId) => {
+    setSelectedSavedSearchId(savedSearchId)
+    const savedSearch = savedSearches.find((item) => item.id === savedSearchId)
+    if (!savedSearch) return
+    setQuery(savedSearch.query || '')
+    setFilter(savedSearch.filter || 'all')
+    setSort(savedSearch.sort || 'recent')
+    setAdvancedFilters({
+      tag: '',
+      creator: '',
+      campaign: '',
+      license: '',
+      dateFrom: '',
+      dateTo: '',
+      minSize: '',
+      maxSize: '',
+      ...(savedSearch.advancedFilters || {}),
+    })
+    setView(savedSearch.view || 'grid')
+    setShowAdvancedFilters(Object.values(savedSearch.advancedFilters || {}).some(Boolean))
+    setSelected([])
+    showNotice(`Applied “${savedSearch.name}”.`)
+  }
+
+  const deleteSelectedSearch = () => {
+    const savedSearch = savedSearches.find((item) => item.id === selectedSavedSearchId)
+    if (!savedSearch) return
+    setSavedSearches((current) => current.filter((item) => item.id !== savedSearch.id))
+    setSelectedSavedSearchId('')
+    showNotice(`Deleted saved view “${savedSearch.name}”.`)
+  }
 
   useEffect(() => {
     if (!currentWorkspace?.id) return undefined
@@ -1875,6 +1986,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
           <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/activity'))}><span>◷</span> Activity <b>{activities.length}</b></button>
+          <button className={activeSection === 'storage' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/storage'))}><span>▤</span> Storage</button>
           <div className="favorites-panel">
             <div className="favorites-heading"><span>Favorites</span><b>{favoriteAssets.length}</b></div>
             {favoriteAssets.length ? favoriteAssets.map((asset) => (
@@ -1891,7 +2003,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : 'All assets'}</strong></div>
+          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : 'All assets'}</strong></div>
           <div className="top-actions">
             <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? '☀️' : '🌙'}
@@ -1901,7 +2013,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             {activeSection === 'collections' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => setIsCreateCollectionOpen(true)}>+ Create collection</button>}
             {(activeSection === 'assets' || activeSection === 'collection') && <button className="ghost" type="button" onClick={exportAssetsCsv}>Export CSV</button>}
             {activeSection === 'assets' && canManageWorkspace && <button className="upload secondary" type="button" onClick={() => { setBulkImportFiles([]); setBulkImportManifest(null); setBulkImportOpen(true) }}>Import folder</button>}
-            {activeSection !== 'collections' && activeSection !== 'collection' && canManageWorkspace && <>
+            {activeSection === 'assets' && canManageWorkspace && <>
               <button className="upload secondary" type="button" onClick={() => { setDrawingDataUrl(''); setSelectedDrawingIdea(''); setCustomAssetOpen(true) }}>+ Create asset</button>
               <button className="upload" type="button" onClick={() => fileInput.current?.click()}>+ Upload assets</button>
             </>}
@@ -1916,17 +2028,17 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         <section className="content" id="assets">
           <div className="title-row">
             <div>
-              <p className="eyebrow">{activeSection === 'activity' ? 'LIVE UPDATES' : activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
-              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : totalAssetCount}</span></h1>
-              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : 'Your asset library is empty until you upload files.'}</p>
+              <p className="eyebrow">{activeSection === 'activity' ? 'LIVE UPDATES' : activeSection === 'storage' ? 'WORKSPACE REPORTING' : activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
+              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : activeSection === 'storage' ? '' : totalAssetCount}</span></h1>
+              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : activeSection === 'storage' ? 'Track workspace storage by file type and upload period.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
-            {activeSection !== 'collections' && activeSection !== 'activity' && <button className="ghost" type="button" onClick={() => setSelected((current) => {
+            {showAssetControls && <button className="ghost" type="button" onClick={() => setSelected((current) => {
               const visibleKeys = visibleAssets.map(getAssetSelectionKey)
               return allVisibleSelected ? current.filter((key) => !visibleKeys.includes(key)) : [...new Set([...current, ...visibleKeys])]
             })}>{allVisibleSelected ? 'Clear visible' : 'Select all'}</button>}
           </div>
 
-          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="toolbar">
+          {showAssetControls && <div className="toolbar">
             <label className="search"><span>/</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label>
             <select className="filter" value={filter} onChange={(event) => setFilter(event.target.value)}>
               <option value="all">Filter: all types</option>
@@ -1942,7 +2054,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} type="button" onClick={() => setView('list')} aria-label="List view">☷</button>
           </div>}
 
-          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="advanced-filter-tools">
+          {showAssetControls && <div className="advanced-filter-tools">
             <button
               className={`ghost advanced-filter-toggle ${showAdvancedFilters || activeAdvancedFilterCount ? 'active' : ''}`}
               type="button"
@@ -1954,7 +2066,30 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             {activeAdvancedFilterCount > 0 && <button className="filter-reset" type="button" onClick={() => setAdvancedFilters({ tag: '', creator: '', campaign: '', license: '', dateFrom: '', dateTo: '', minSize: '', maxSize: '' })}>Clear filters</button>}
           </div>}
 
-          {showAdvancedFilters && activeSection !== 'collections' && activeSection !== 'activity' && <div className="advanced-filter-panel" aria-label="Advanced asset filters">
+          {activeSection === 'assets' && <div className="saved-search-tools">
+            <label>
+              <span>Saved views</span>
+              <select value={selectedSavedSearchId} onChange={(event) => applySavedSearch(event.target.value)}>
+                <option value="">Choose a saved view</option>
+                {savedSearches.map((savedSearch) => <option value={savedSearch.id} key={savedSearch.id}>{savedSearch.name}</option>)}
+              </select>
+            </label>
+            <div className="saved-search-actions">
+              {selectedSavedSearchId && <button className="filter-reset" type="button" onClick={deleteSelectedSearch}>Delete view</button>}
+              <button className="ghost" type="button" onClick={() => setIsNamingSavedSearch((current) => !current)}>
+                {isNamingSavedSearch ? 'Cancel' : 'Save current view'}
+              </button>
+            </div>
+            {isNamingSavedSearch && <form className="saved-search-name-form" onSubmit={saveCurrentSearch}>
+              <label>
+                <span>View name</span>
+                <input autoFocus maxLength={60} value={savedSearchName} onChange={(event) => setSavedSearchName(event.target.value)} placeholder="e.g. Approved summer images" required />
+              </label>
+              <button className="upload" type="submit">Save view</button>
+            </form>}
+          </div>}
+
+          {showAdvancedFilters && showAssetControls && <div className="advanced-filter-panel" aria-label="Advanced asset filters">
             <label>
               <span>Tag</span>
               <select value={advancedFilters.tag} onChange={(event) => setAdvancedFilters((current) => ({ ...current, tag: event.target.value }))}>
@@ -2001,7 +2136,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             </label>
           </div>}
 
-          {activeSection !== 'collections' && activeSection !== 'activity' && <div className="summary">
+          {showAssetControls && <div className="summary">
             <span><b>{visibleAssets.length}</b> of {currentAssets.length} assets shown</span>
             <span className="dot-separator" />
             <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
@@ -2009,7 +2144,22 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             <span className="sync">● {totalAssetCount > 0 ? 'Library active' : 'No files yet'}</span>
           </div>}
 
-          {activeSection !== 'collections' && activeSection !== 'activity' && <BulkAssetActions
+          {activeSection === 'storage' && <StorageReport
+            data={storageReport}
+            period={storagePeriod}
+            isLoading={isLoadingStorageReport}
+            error={storageReportError}
+            onPeriodChange={(period) => {
+              setIsLoadingStorageReport(true)
+              setStoragePeriod(period)
+            }}
+            onRetry={() => {
+              setIsLoadingStorageReport(true)
+              setStorageReportRequest((current) => current + 1)
+            }}
+          />}
+
+          {showAssetControls && <BulkAssetActions
             count={selectedAssets.length}
             isTrash={activeSection === 'trash'}
             canManageWorkspace={canManageWorkspace}
@@ -2024,7 +2174,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             onClear={() => setSelected([])}
           />}
 
-          {activeSection === 'activity' ? (
+          {activeSection === 'storage' ? null : activeSection === 'activity' ? (
             <ActivityFeed activities={activities} />
           ) : activeSection === 'collections' ? (
             <CollectionGrid

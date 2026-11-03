@@ -1,11 +1,13 @@
 import json
 import mimetypes
 import uuid
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 
 from django.core.files.base import ContentFile
-from django.db.models import Max
+from django.db.models import Count, Max, Sum
+from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 from django.http import FileResponse, HttpResponse
 from django.db import transaction
 from django.utils import timezone
@@ -109,6 +111,78 @@ class AssetViewSet(viewsets.ModelViewSet):
         instance.deleted_at = timezone.now()
         instance.save(update_fields=['deleted_at', 'updated_at'])
         record_activity(instance.tenant, self.request.user, f'Moved “{instance.name}” to trash.')
+
+    @action(detail=False, methods=['get'], url_path='storage-usage')
+    def storage_usage(self, request):
+        tenant = request.user.active_tenant
+        if tenant is None:
+            return Response({'detail': 'No active workspace is selected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        periods = {
+            '7d': (7, TruncDate('created_at')),
+            '30d': (30, TruncDate('created_at')),
+            '90d': (90, TruncWeek('created_at')),
+            '365d': (365, TruncMonth('created_at')),
+        }
+        period = request.query_params.get('period', '30d')
+        if period not in periods:
+            return Response(
+                {'period': ['Choose one of: 7d, 30d, 90d, 365d.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        period_days, bucket_expression = periods[period]
+        stored_assets = Asset.objects.filter(tenant=tenant, file__isnull=False).exclude(file='')
+        totals = stored_assets.aggregate(total_bytes=Sum('size_bytes'), asset_count=Count('id'))
+        type_totals = stored_assets.values('content_type').annotate(
+            total_bytes=Sum('size_bytes'),
+            asset_count=Count('id'),
+        ).order_by('-total_bytes', 'content_type')
+        by_type = []
+        for item in type_totals:
+            content_type = item['content_type'] or 'application/octet-stream'
+            extension = mimetypes.guess_extension(content_type, strict=False)
+            type_label = extension.lstrip('.').upper() if extension else content_type.split('/')[-1].upper()
+            if type_label in ('JPE', 'JPEG'):
+                type_label = 'JPG'
+            by_type.append({
+                'type': type_label,
+                'content_type': content_type,
+                'total_bytes': item['total_bytes'] or 0,
+                'asset_count': item['asset_count'],
+            })
+
+        start_date = timezone.localdate() - timedelta(days=period_days - 1)
+        period_assets = stored_assets.filter(created_at__date__gte=start_date)
+        timeline_rows = period_assets.annotate(bucket=bucket_expression).values('bucket').annotate(
+            total_bytes=Sum('size_bytes'),
+            asset_count=Count('id'),
+        ).order_by('bucket')
+        timeline = []
+        for item in timeline_rows:
+            bucket = item['bucket']
+            if hasattr(bucket, 'date'):
+                bucket = bucket.date()
+            timeline.append({
+                'date': bucket.isoformat(),
+                'total_bytes': item['total_bytes'] or 0,
+                'asset_count': item['asset_count'],
+            })
+
+        period_totals = period_assets.aggregate(
+            total_bytes=Sum('size_bytes'),
+            asset_count=Count('id'),
+        )
+        return Response({
+            'workspace': {'id': str(tenant.pk), 'name': tenant.name},
+            'period': period,
+            'total_bytes': totals['total_bytes'] or 0,
+            'asset_count': totals['asset_count'],
+            'period_bytes': period_totals['total_bytes'] or 0,
+            'period_asset_count': period_totals['asset_count'],
+            'by_type': by_type,
+            'timeline': timeline,
+        })
 
     @action(detail=False, methods=['get'])
     def trash(self, request):

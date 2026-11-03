@@ -1,21 +1,80 @@
 import json
 import tempfile
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from io import BytesIO
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.assets.models import AssetVersion
+from apps.assets.models import Asset, AssetVersion
 from apps.tenants.models import ActivityEvent
 
 
 class AssetAccessTests(TestCase):
+    def test_storage_usage_is_workspace_scoped_and_splits_total_from_period_uploads(self):
+        owner = get_user_model().objects.create_user(
+            username=f"storage-owner-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        owner_client = APIClient()
+        owner_client.force_authenticate(user=owner)
+
+        image_bytes = b"storage report image"
+        image_response = owner_client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("report.png", image_bytes, content_type="image/png")},
+            format="multipart",
+        )
+        self.assertEqual(image_response.status_code, 201, image_response.content)
+
+        document_bytes = b"storage report document"
+        document_response = owner_client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("report.pdf", document_bytes, content_type="application/pdf")},
+            format="multipart",
+        )
+        self.assertEqual(document_response.status_code, 201, document_response.content)
+        old_upload = Asset.objects.get(pk=document_response.json()["id"])
+        Asset.objects.filter(pk=old_upload.pk).update(created_at=timezone.now() - timedelta(days=40))
+        owner_client.delete(reverse("asset-detail", args=[old_upload.pk]))
+
+        outsider = get_user_model().objects.create_user(
+            username=f"storage-outsider-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        outsider_upload = outsider_client.post(
+            "/api/assets/upload/",
+            {"file": SimpleUploadedFile("outside.jpg", b"outside workspace", content_type="image/jpeg")},
+            format="multipart",
+        )
+        self.assertEqual(outsider_upload.status_code, 201, outsider_upload.content)
+
+        response = owner_client.get(reverse("asset-storage-usage"), {"period": "7d"})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        report = response.json()
+        self.assertEqual(report["workspace"]["id"], str(owner.active_tenant_id))
+        self.assertEqual(report["asset_count"], 2)
+        self.assertEqual(report["total_bytes"], len(image_bytes) + len(document_bytes))
+        self.assertEqual(report["period_asset_count"], 1)
+        self.assertEqual(report["period_bytes"], len(image_bytes))
+        self.assertEqual({item["content_type"] for item in report["by_type"]}, {"image/png", "application/pdf"})
+        self.assertEqual(sum(item["asset_count"] for item in report["by_type"]), 2)
+        self.assertEqual(sum(item["asset_count"] for item in report["timeline"]), 1)
+
+        invalid_period_response = owner_client.get(reverse("asset-storage-usage"), {"period": "2d"})
+        self.assertEqual(invalid_period_response.status_code, 400)
+        self.assertIn("7d", invalid_period_response.json()["period"][0])
+
+        self.assertIn(self.client.get(reverse("asset-storage-usage")).status_code, (401, 403))
+
     def test_multipart_upload_is_stored_and_served_only_to_workspace_members(self):
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=Path(media_root)):
@@ -153,6 +212,35 @@ class AssetAccessTests(TestCase):
                 with Image.open(BytesIO(thumbnail_response.content)) as thumbnail:
                     self.assertLessEqual(thumbnail.width, 640)
                     self.assertLessEqual(thumbnail.height, 480)
+
+    def test_missing_stored_asset_file_returns_not_found_for_thumbnail_and_download(self):
+        user = get_user_model().objects.create_user(
+            username=f"missing-file-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        create_response = client.post(
+            "/api/assets/",
+            {
+                "name": "Missing image",
+                "object_key": f"missing/{uuid.uuid4().hex}.jpg",
+                "content_type": "image/jpeg",
+                "size_bytes": 64,
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, 201, create_response.content)
+        asset = Asset.objects.get(pk=create_response.json()["id"])
+        asset.file.name = f"missing/{uuid.uuid4().hex}.jpg"
+        asset.save(update_fields=["file"])
+
+        thumbnail_response = client.get(f"/api/assets/{asset.pk}/file/", {"thumbnail": "1"})
+        download_response = client.get(f"/api/assets/{asset.pk}/file/")
+
+        self.assertEqual(thumbnail_response.status_code, 404)
+        self.assertEqual(thumbnail_response.json()["detail"], "The stored asset file is missing.")
+        self.assertEqual(download_response.status_code, 404)
+        self.assertEqual(download_response.json()["detail"], "The stored asset file is missing.")
 
     def test_get_assets_allows_anonymous_access_even_with_invalid_bearer_token(self):
         response = self.client.get(
