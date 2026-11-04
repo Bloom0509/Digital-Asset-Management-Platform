@@ -102,10 +102,26 @@ class AssetViewSet(viewsets.ModelViewSet):
             for field in ("tags", "description", "alt_text", "creator", "campaign", "license", "custom_fields")
         }
         asset = serializer.save()
+        metadata_changed = any(getattr(asset, field) != value for field, value in previous_metadata.items())
+        asset_changed = asset.name != previous_name or metadata_changed
+        if asset_changed and asset.approval_status != Asset.ApprovalStatus.DRAFT:
+            self._reset_approval(asset)
         if asset.name != previous_name:
             record_activity(asset.tenant, self.request.user, f'Renamed asset “{previous_name}” to “{asset.name}”.')
-        elif any(getattr(asset, field) != value for field, value in previous_metadata.items()):
+        elif metadata_changed:
             record_activity(asset.tenant, self.request.user, f'Updated metadata for “{asset.name}”.')
+
+    @staticmethod
+    def _reset_approval(asset):
+        asset.approval_status = Asset.ApprovalStatus.DRAFT
+        asset.submitted_by = None
+        asset.submitted_at = None
+        asset.reviewed_by = None
+        asset.reviewed_at = None
+        asset.review_note = ""
+        asset.save(update_fields=[
+            'approval_status', 'submitted_by', 'submitted_at', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at',
+        ])
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
@@ -329,6 +345,12 @@ class AssetViewSet(viewsets.ModelViewSet):
             asset.content_type = content_type
             asset.size_bytes = uploaded_file.size
             asset.file_hash = file_hash
+            asset.approval_status = Asset.ApprovalStatus.DRAFT
+            asset.submitted_by = None
+            asset.submitted_at = None
+            asset.reviewed_by = None
+            asset.reviewed_at = None
+            asset.review_note = ""
             for field, value in metadata_serializer.validated_data.items():
                 setattr(asset, field, value)
             asset.size_bytes = uploaded_file.size
@@ -338,11 +360,74 @@ class AssetViewSet(viewsets.ModelViewSet):
                 'type': extension.lstrip('.').upper(),
             }
             asset.save(update_fields=[
-                'file', 'object_key', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'updated_at',
+                'file', 'object_key', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'approval_status',
+                'submitted_by', 'submitted_at', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at',
             ])
             self._delete_file_after_commit(old_storage, old_file_name)
 
         record_activity(asset.tenant, request.user, f'Replaced the file for “{asset.name}”.')
+        return Response(self.get_serializer(asset).data)
+
+    @action(detail=True, methods=['post'], url_path='submit-for-review')
+    def submit_for_review(self, request, pk=None):
+        asset = self.get_object()
+        if asset.approval_status not in (
+            Asset.ApprovalStatus.DRAFT,
+            Asset.ApprovalStatus.CHANGES_REQUESTED,
+        ):
+            return Response(
+                {'detail': 'Only draft assets or assets with requested changes can be submitted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        asset.approval_status = Asset.ApprovalStatus.IN_REVIEW
+        asset.submitted_by = request.user
+        asset.submitted_at = timezone.now()
+        asset.reviewed_by = None
+        asset.reviewed_at = None
+        asset.review_note = ""
+        asset.save(update_fields=[
+            'approval_status', 'submitted_by', 'submitted_at', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at',
+        ])
+        record_activity(asset.tenant, request.user, f'Submitted “{asset.name}” for review.')
+        return Response(self.get_serializer(asset).data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        if request.workspace_membership.role != Membership.Role.ADMIN:
+            return Response({'detail': 'Only workspace admins can approve assets.'}, status=status.HTTP_403_FORBIDDEN)
+        asset = self.get_object()
+        if asset.approval_status != Asset.ApprovalStatus.IN_REVIEW:
+            return Response({'detail': 'Only assets in review can be approved.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        asset.approval_status = Asset.ApprovalStatus.APPROVED
+        asset.reviewed_by = request.user
+        asset.reviewed_at = timezone.now()
+        asset.review_note = ""
+        asset.save(update_fields=['approval_status', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+        record_activity(asset.tenant, request.user, f'Approved “{asset.name}”.')
+        return Response(self.get_serializer(asset).data)
+
+    @action(detail=True, methods=['post'], url_path='request-changes')
+    def request_changes(self, request, pk=None):
+        if request.workspace_membership.role != Membership.Role.ADMIN:
+            return Response({'detail': 'Only workspace admins can request changes.'}, status=status.HTTP_403_FORBIDDEN)
+        asset = self.get_object()
+        if asset.approval_status != Asset.ApprovalStatus.IN_REVIEW:
+            return Response({'detail': 'Only assets in review can have changes requested.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        note = request.data.get('note', '').strip()
+        if not note:
+            return Response({'note': ['Provide a reason for the requested changes.']}, status=status.HTTP_400_BAD_REQUEST)
+        if len(note) > 2000:
+            return Response({'note': ['Review notes must be 2000 characters or fewer.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        asset.approval_status = Asset.ApprovalStatus.CHANGES_REQUESTED
+        asset.reviewed_by = request.user
+        asset.reviewed_at = timezone.now()
+        asset.review_note = note
+        asset.save(update_fields=['approval_status', 'reviewed_by', 'reviewed_at', 'review_note', 'updated_at'])
+        record_activity(asset.tenant, request.user, f'Requested changes for “{asset.name}”: {note[:180]}')
         return Response(self.get_serializer(asset).data)
 
     @action(
@@ -398,6 +483,8 @@ class AssetViewSet(viewsets.ModelViewSet):
                 'file', 'object_key', 'name', 'content_type', 'size_bytes', 'file_hash', 'metadata', 'tags',
                 'description', 'alt_text', 'creator', 'campaign', 'license', 'custom_fields', 'updated_at',
             ])
+            if asset.approval_status != Asset.ApprovalStatus.DRAFT:
+                self._reset_approval(asset)
             self._delete_file_after_commit(old_storage, old_file_name)
 
         record_activity(
@@ -435,7 +522,18 @@ class AssetViewSet(viewsets.ModelViewSet):
                     context=self.get_serializer_context(),
                 )
                 serializer.is_valid(raise_exception=True)
-                updated_assets.append(serializer.save())
+                previous_metadata = {
+                    field: getattr(asset, field)
+                    for field in ('tags', 'description', 'alt_text', 'creator', 'campaign', 'license', 'custom_fields')
+                }
+                updated_asset = serializer.save()
+                metadata_changed = any(
+                    getattr(updated_asset, field) != value
+                    for field, value in previous_metadata.items()
+                )
+                if metadata_changed and updated_asset.approval_status != Asset.ApprovalStatus.DRAFT:
+                    self._reset_approval(updated_asset)
+                updated_assets.append(updated_asset)
             record_activity(
                 request.user.active_tenant,
                 request.user,
@@ -499,6 +597,8 @@ class AssetViewSet(viewsets.ModelViewSet):
         asset = self.get_object()
         if not asset.file:
             return Response({'detail': 'This asset does not have a stored file.'}, status=status.HTTP_404_NOT_FOUND)
+        if not asset.file.storage.exists(asset.file.name):
+            return Response({'detail': 'The stored asset file is missing.'}, status=status.HTTP_404_NOT_FOUND)
 
         if request.query_params.get('thumbnail') == '1':
             if not asset.content_type.startswith('image/'):

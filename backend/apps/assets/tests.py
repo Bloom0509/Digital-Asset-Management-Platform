@@ -14,10 +14,130 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.assets.models import Asset, AssetVersion
-from apps.tenants.models import ActivityEvent
+from apps.tenants.models import ActivityEvent, Membership
 
 
 class AssetAccessTests(TestCase):
+    def test_asset_review_workflow_requires_admin_review_and_resets_after_edits(self):
+        admin = get_user_model().objects.create_user(
+            username=f"review-admin-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        admin_client = APIClient()
+        admin_client.force_authenticate(user=admin)
+        create_response = admin_client.post(
+            "/api/assets/",
+            {
+                "name": "Review banner",
+                "object_key": f"review/{uuid.uuid4().hex}.png",
+                "content_type": "image/png",
+                "description": "Draft campaign artwork",
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, 201, create_response.content)
+        asset_id = create_response.json()["id"]
+        self.assertEqual(create_response.json()["approval_status"], "draft")
+
+        editor = get_user_model().objects.create_user(
+            username=f"review-editor-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+        )
+        Membership.objects.create(tenant=admin.active_tenant, user=editor, role=Membership.Role.EDITOR)
+        editor.active_tenant = admin.active_tenant
+        editor.save(update_fields=["active_tenant"])
+        editor_client = APIClient()
+        editor_client.force_authenticate(user=editor)
+
+        submit_response = editor_client.post(reverse("asset-submit-for-review", args=[asset_id]))
+        self.assertEqual(submit_response.status_code, 200, submit_response.content)
+        self.assertEqual(submit_response.json()["approval_status"], "in_review")
+        self.assertEqual(submit_response.json()["submitted_by_name"], editor.username)
+
+        editor_approval_response = editor_client.post(reverse("asset-approve", args=[asset_id]))
+        self.assertEqual(editor_approval_response.status_code, 403)
+
+        missing_note_response = admin_client.post(reverse("asset-request-changes", args=[asset_id]), {}, format="json")
+        self.assertEqual(missing_note_response.status_code, 400)
+        self.assertIn("note", missing_note_response.json())
+
+        changes_response = admin_client.post(
+            reverse("asset-request-changes", args=[asset_id]),
+            {"note": "Increase the headline contrast."},
+            format="json",
+        )
+        self.assertEqual(changes_response.status_code, 200, changes_response.content)
+        self.assertEqual(changes_response.json()["approval_status"], "changes_requested")
+        self.assertEqual(changes_response.json()["review_note"], "Increase the headline contrast.")
+        self.assertEqual(changes_response.json()["reviewed_by_name"], admin.username)
+
+        resubmit_response = editor_client.post(reverse("asset-submit-for-review", args=[asset_id]))
+        self.assertEqual(resubmit_response.status_code, 200, resubmit_response.content)
+        self.assertEqual(resubmit_response.json()["approval_status"], "in_review")
+        self.assertEqual(resubmit_response.json()["review_note"], "")
+
+        approval_response = admin_client.post(reverse("asset-approve", args=[asset_id]))
+        self.assertEqual(approval_response.status_code, 200, approval_response.content)
+        self.assertEqual(approval_response.json()["approval_status"], "approved")
+
+        edit_response = editor_client.patch(
+            reverse("asset-detail", args=[asset_id]),
+            {"description": "Updated campaign artwork."},
+            format="json",
+        )
+        self.assertEqual(edit_response.status_code, 200, edit_response.content)
+        self.assertEqual(edit_response.json()["approval_status"], "draft")
+        self.assertIsNone(edit_response.json()["reviewed_at"])
+
+        resubmit_response = editor_client.post(reverse("asset-submit-for-review", args=[asset_id]))
+        self.assertEqual(resubmit_response.status_code, 200, resubmit_response.content)
+        self.assertEqual(admin_client.post(reverse("asset-approve", args=[asset_id])).status_code, 200)
+        bulk_response = editor_client.post(
+            reverse("asset-bulk-metadata"),
+            {"asset_ids": [asset_id], "metadata": {"tags": ["updated-after-review"]}},
+            format="json",
+        )
+        self.assertEqual(bulk_response.status_code, 200, bulk_response.content)
+        self.assertEqual(bulk_response.json()["assets"][0]["approval_status"], "draft")
+
+    def test_restoring_an_asset_version_returns_approved_asset_to_draft(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                admin = get_user_model().objects.create_user(
+                    username=f"restore-review-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                client = APIClient()
+                client.force_authenticate(user=admin)
+                upload_response = client.post(
+                    "/api/assets/upload/",
+                    {"file": SimpleUploadedFile("review.txt", b"original bytes", content_type="text/plain")},
+                    format="multipart",
+                )
+                self.assertEqual(upload_response.status_code, 201, upload_response.content)
+                asset_id = upload_response.json()["id"]
+
+                replace_response = client.post(
+                    f"/api/assets/{asset_id}/replace-file/",
+                    {"file": SimpleUploadedFile("review.txt", b"replacement bytes", content_type="text/plain")},
+                    format="multipart",
+                )
+                self.assertEqual(replace_response.status_code, 200, replace_response.content)
+                version = client.get(f"/api/assets/{asset_id}/versions/").json()[0]
+
+                submit_response = client.post(reverse("asset-submit-for-review", args=[asset_id]))
+                self.assertEqual(submit_response.status_code, 200, submit_response.content)
+                approval_response = client.post(reverse("asset-approve", args=[asset_id]))
+                self.assertEqual(approval_response.status_code, 200, approval_response.content)
+                self.assertEqual(approval_response.json()["approval_status"], "approved")
+
+                restore_response = client.post(
+                    f"/api/assets/{asset_id}/versions/{version['id']}/restore/",
+                    format="json",
+                )
+
+                self.assertEqual(restore_response.status_code, 200, restore_response.content)
+                self.assertEqual(restore_response.json()["approval_status"], "draft")
+                self.assertIsNone(restore_response.json()["reviewed_at"])
+                self.assertEqual(restore_response.json()["review_note"], "")
+
     def test_storage_usage_is_workspace_scoped_and_splits_total_from_period_uploads(self):
         owner = get_user_model().objects.create_user(
             username=f"storage-owner-{uuid.uuid4().hex[:8]}", password="StrongPass123"

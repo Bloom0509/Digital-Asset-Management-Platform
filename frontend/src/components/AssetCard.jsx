@@ -1,12 +1,21 @@
 import { getAssetSelectionKey } from './assetSelection.js'
 
-function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onEditMetadata, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
+function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onEditMetadata, onSubmitForReview, onApprove, onRequestChanges, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
   return (
     <div className="menu">
       <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenPreview(asset) }}>Open preview</button>
       <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(asset) }}>Download</button>
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onRename(asset) }}>Rename</button>}
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit asset</button>}
+      {canManageWorkspace && activeSection !== 'trash' && ['draft', 'changes_requested'].includes(asset.approval_status || 'draft') && (
+        <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onSubmitForReview(asset) }}>
+          {asset.approval_status === 'changes_requested' ? 'Resubmit for review' : 'Submit for review'}
+        </button>
+      )}
+      {isAdmin && activeSection !== 'trash' && asset.approval_status === 'in_review' && <>
+        <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onApprove(asset) }}>Approve</button>
+        <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onRequestChanges(asset) }}>Request changes</button>
+      </>}
       {activeSection === 'trash' ? (
         canManageWorkspace && <>
           <button type="button" onClick={(event) => { event.stopPropagation(); onRestore(asset) }}>Restore</button>
@@ -55,6 +64,9 @@ export default function AssetCard({
   onDownload,
   onRename,
   onEditMetadata,
+  onSubmitForReview,
+  onApprove,
+  onRequestChanges,
   onRestore,
   onPermanentlyDelete,
   onRemoveFromCollection,
@@ -62,6 +74,13 @@ export default function AssetCard({
   onDelete,
   onToggleStar,
 }) {
+  const approvalStatus = asset.approval_status || 'draft'
+  const approvalLabels = {
+    draft: 'Draft',
+    in_review: 'In review',
+    changes_requested: 'Changes requested',
+    approved: 'Approved',
+  }
   const stopAnd = (event, callback) => {
     event.stopPropagation()
     callback(asset)
@@ -95,6 +114,9 @@ export default function AssetCard({
             onDownload={onDownload}
             onRename={onRename}
             onEditMetadata={onEditMetadata}
+            onSubmitForReview={onSubmitForReview}
+            onApprove={onApprove}
+            onRequestChanges={onRequestChanges}
             onRestore={onRestore}
             onPermanentlyDelete={onPermanentlyDelete}
             onRemoveFromCollection={onRemoveFromCollection}
@@ -108,6 +130,8 @@ export default function AssetCard({
         <div>
           <h2>{asset.name}</h2>
           <p>{asset.size} <span>·</span> {asset.updated}</p>
+          <span className={`approval-status approval-${approvalStatus}`}>{approvalLabels[approvalStatus] || 'Draft'}</span>
+          {approvalStatus === 'changes_requested' && asset.review_note && <p className="asset-review-note" title={asset.review_note}>{asset.review_note}</p>}
           {asset.tags?.length > 0 && (
             <div className="asset-tags" aria-label="Asset tags">
               {asset.tags.slice(0, 3).map((tag) => <span className="asset-tag" key={tag}>{tag}</span>)}

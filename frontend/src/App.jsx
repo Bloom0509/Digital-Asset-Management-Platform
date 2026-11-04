@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -629,6 +629,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [isLoadingVersions, setIsLoadingVersions] = useState(false)
   const [replacementFile, setReplacementFile] = useState(null)
   const [isSavingMetadata, setIsSavingMetadata] = useState(false)
+  const [reviewAsset, setReviewAsset] = useState(null)
+  const [reviewNote, setReviewNote] = useState('')
+  const [isSavingReview, setIsSavingReview] = useState(false)
   const [bulkMetadataOpen, setBulkMetadataOpen] = useState(false)
   const [bulkMetadataForm, setBulkMetadataForm] = useState(emptyMetadataForm)
   const [bulkMetadataFields, setBulkMetadataFields] = useState([])
@@ -1184,6 +1187,78 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const showNotice = (message) => {
     setNotice(message)
     setMenu(null)
+  }
+
+  const applyAssetReviewUpdate = (data) => {
+    const mappedAsset = mapApiAsset(data)
+    const replaceAsset = (asset) => asset.id === mappedAsset.id
+      ? { ...asset, ...mappedAsset, image: asset.image || mappedAsset.image }
+      : asset
+    setAssets((current) => current.map(replaceAsset))
+    setTrashAssets((current) => current.map(replaceAsset))
+    setCollections((current) => current.map((collection) => ({
+      ...collection,
+      assets: (collection.assets || []).map(replaceAsset),
+    })))
+    setPreviewAsset((current) => current?.id === mappedAsset.id ? { ...current, ...mappedAsset, image: current.image || mappedAsset.image } : current)
+  }
+
+  const submitAssetForReview = async (asset) => {
+    setIsSavingReview(true)
+    try {
+      const response = await apiRequest(`/api/assets/${asset.id}/submit-for-review/`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to submit this asset for review.')
+      applyAssetReviewUpdate(data)
+      showNotice(`“${asset.name}” submitted for review.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to submit this asset for review.')
+    } finally {
+      setIsSavingReview(false)
+    }
+  }
+
+  const approveAsset = async (asset) => {
+    setIsSavingReview(true)
+    try {
+      const response = await apiRequest(`/api/assets/${asset.id}/approve/`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to approve this asset.')
+      applyAssetReviewUpdate(data)
+      showNotice(`“${asset.name}” approved.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to approve this asset.')
+    } finally {
+      setIsSavingReview(false)
+    }
+  }
+
+  const openRequestChanges = (asset) => {
+    setReviewAsset(asset)
+    setReviewNote('')
+  }
+
+  const requestAssetChanges = async (event) => {
+    event.preventDefault()
+    if (!reviewAsset || !reviewNote.trim()) return
+    setIsSavingReview(true)
+    try {
+      const response = await apiRequest(`/api/assets/${reviewAsset.id}/request-changes/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: reviewNote.trim() }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.note?.[0] || data?.detail || 'Unable to request changes.')
+      applyAssetReviewUpdate(data)
+      setReviewAsset(null)
+      setReviewNote('')
+      showNotice(`Changes requested for “${data.name}”.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to request changes.')
+    } finally {
+      setIsSavingReview(false)
+    }
   }
 
   const openMemberManager = async () => {
@@ -2198,6 +2273,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               onDownload={downloadAsset}
               onRename={renameAsset}
               onEditMetadata={openMetadataEditor}
+              onSubmitForReview={submitAssetForReview}
+              onApprove={approveAsset}
+              onRequestChanges={openRequestChanges}
               onRestore={restoreAsset}
               onPermanentlyDelete={permanentlyDeleteAsset}
               onRemoveFromCollection={removeAssetFromCollection}
@@ -2210,6 +2288,14 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       </main>
 
       <ToastNotification message={notice} onDismiss={() => setNotice('')} />
+      <RequestChangesModal
+        asset={reviewAsset}
+        note={reviewNote}
+        isSaving={isSavingReview}
+        onNoteChange={setReviewNote}
+        onClose={() => { if (!isSavingReview) setReviewAsset(null) }}
+        onSubmit={requestAssetChanges}
+      />
       {isMemberManagerOpen && <div className="modal-backdrop" onClick={() => setIsMemberManagerOpen(false)}>
         <section className="asset-modal member-manager-modal" onClick={(event) => event.stopPropagation()} aria-labelledby="member-manager-title">
           <button className="modal-close" type="button" onClick={() => setIsMemberManagerOpen(false)} aria-label="Close member manager">×</button>

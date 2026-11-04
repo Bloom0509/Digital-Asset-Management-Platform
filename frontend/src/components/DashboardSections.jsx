@@ -101,6 +101,32 @@ export function StorageReport({ data, period, isLoading, error, onPeriodChange, 
   )
 }
 
+export function RequestChangesModal({ asset, note, isSaving, onNoteChange, onClose, onSubmit }) {
+  if (!asset) return null
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="asset-modal request-changes-modal" onSubmit={onSubmit} onClick={(event) => event.stopPropagation()}>
+        <button className="modal-close" type="button" onClick={onClose} disabled={isSaving} aria-label="Close review dialog">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">ASSET REVIEW</p>
+          <h3>Request changes</h3>
+          <p>Tell {asset.name}’s editor what needs to change.</p>
+        </div>
+        <label className="request-changes-note">
+          <span>Review note</span>
+          <textarea value={note} onChange={(event) => onNoteChange(event.target.value)} maxLength={2000} rows={5} required autoFocus />
+          <small>{note.length}/2000</small>
+        </label>
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
+          <button type="submit" className="upload create-submit" disabled={isSaving || !note.trim()}>{isSaving ? 'Sending…' : 'Request changes'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 export function ActivityFeed({ activities }) {
   if (!activities.length) {
     return <div className="empty activity-empty"><strong>No activity yet</strong><span>Actions in your workspace will appear here in real time.</span></div>
@@ -142,6 +168,9 @@ export function AssetGrid({
   onDownload,
   onRename,
   onEditMetadata,
+  onSubmitForReview,
+  onApprove,
+  onRequestChanges,
   onRestore,
   onPermanentlyDelete,
   onRemoveFromCollection,
@@ -176,6 +205,9 @@ export function AssetGrid({
           onDownload={onDownload}
           onRename={onRename}
           onEditMetadata={onEditMetadata}
+          onSubmitForReview={onSubmitForReview}
+          onApprove={onApprove}
+          onRequestChanges={onRequestChanges}
           onRestore={onRestore}
           onPermanentlyDelete={onPermanentlyDelete}
           onRemoveFromCollection={onRemoveFromCollection}

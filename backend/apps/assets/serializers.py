@@ -12,6 +12,8 @@ from .models import Asset, AssetVersion
 class AssetSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     thumbnail_url = serializers.SerializerMethodField()
+    submitted_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
     tags = serializers.ListField(
         child=serializers.CharField(max_length=50, allow_blank=True),
         required=False,
@@ -26,9 +28,15 @@ class AssetSerializer(serializers.ModelSerializer):
         fields = (
             "id", "tenant", "uploaded_by", "name", "object_key", "content_type",
             "size_bytes", "file_hash", "metadata", "tags", "description", "alt_text", "creator", "campaign",
-            "license", "custom_fields", "created_at", "updated_at", "deleted_at", "file_url", "thumbnail_url",
+            "license", "custom_fields", "approval_status", "submitted_by", "submitted_by_name", "submitted_at",
+            "reviewed_by", "reviewed_by_name", "reviewed_at", "review_note", "created_at", "updated_at",
+            "deleted_at", "file_url", "thumbnail_url",
         )
-        read_only_fields = ("id", "tenant", "uploaded_by", "file_hash", "created_at", "updated_at", "deleted_at", "file_url", "thumbnail_url")
+        read_only_fields = (
+            "id", "tenant", "uploaded_by", "file_hash", "approval_status", "submitted_by", "submitted_at",
+            "reviewed_by", "reviewed_at", "review_note", "created_at", "updated_at", "deleted_at", "file_url",
+            "thumbnail_url", "submitted_by_name", "reviewed_by_name",
+        )
 
     def validate_tags(self, tags):
         if len(tags) > 20:
@@ -72,6 +80,12 @@ class AssetSerializer(serializers.ModelSerializer):
         if not asset.file or not asset.content_type.startswith("image/"):
             return None
         return f"{reverse('asset-file', kwargs={'pk': asset.pk})}?thumbnail=1"
+
+    def get_submitted_by_name(self, asset):
+        return asset.submitted_by.get_username() if asset.submitted_by_id else None
+
+    def get_reviewed_by_name(self, asset):
+        return asset.reviewed_by.get_username() if asset.reviewed_by_id else None
 
 
 class AssetVersionSerializer(serializers.ModelSerializer):
