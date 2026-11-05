@@ -1,10 +1,11 @@
 import { getAssetSelectionKey } from './assetSelection.js'
 
-function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onRename, onEditMetadata, onSubmitForReview, onApprove, onRequestChanges, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
+function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onOpenRendition, onRename, onEditMetadata, onSubmitForReview, onApprove, onRequestChanges, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
   return (
     <div className="menu">
       <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenPreview(asset) }}>Open preview</button>
       <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(asset) }}>Download</button>
+      {asset.kind === 'image' && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenRendition(asset) }}>Resize or convert</button>}
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onRename(asset) }}>Rename</button>}
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit asset</button>}
       {canManageWorkspace && activeSection !== 'trash' && ['draft', 'changes_requested'].includes(asset.approval_status || 'draft') && (
@@ -62,6 +63,7 @@ export default function AssetCard({
   onToggleMenu,
   onOpenPreview,
   onDownload,
+  onOpenRendition,
   onRename,
   onEditMetadata,
   onSubmitForReview,
@@ -112,6 +114,7 @@ export default function AssetCard({
             isAdmin={isAdmin}
             onOpenPreview={onOpenPreview}
             onDownload={onDownload}
+            onOpenRendition={onOpenRendition}
             onRename={onRename}
             onEditMetadata={onEditMetadata}
             onSubmitForReview={onSubmitForReview}

@@ -127,6 +127,123 @@ export function RequestChangesModal({ asset, note, isSaving, onNoteChange, onClo
   )
 }
 
+export function RenditionModal({ asset, apiRequest, onClose, onNotice }) {
+  const [outputFormat, setOutputFormat] = useState('jpg')
+  const [width, setWidth] = useState('1920')
+  const [height, setHeight] = useState('1920')
+  const [quality, setQuality] = useState(82)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+  }, [previewUrl])
+
+  if (!asset) return null
+
+  const getRenditionUrl = () => {
+    const params = new URLSearchParams({
+      rendition: '1',
+      output_format: outputFormat,
+      width,
+      height,
+      quality: String(quality),
+    })
+    return `/api/assets/${asset.id}/file/?${params.toString()}`
+  }
+
+  const fetchRendition = async () => {
+    const response = await apiRequest(getRenditionUrl())
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data?.detail || Object.values(data || {}).flat()?.[0] || 'Unable to generate this rendition.')
+    }
+    return response.blob()
+  }
+
+  const generatePreview = async () => {
+    setIsLoading(true)
+    setError('')
+    try {
+      const blobUrl = URL.createObjectURL(await fetchRendition())
+      setPreviewUrl(blobUrl)
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to generate this rendition.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const downloadRendition = async () => {
+    setIsLoading(true)
+    setError('')
+    try {
+      const blobUrl = URL.createObjectURL(await fetchRendition())
+      const downloadLink = document.createElement('a')
+      const name = asset.name.replace(/\.[^.]+$/, '') || 'asset'
+      downloadLink.href = blobUrl
+      downloadLink.download = `${name}-${width}x${height}.${outputFormat}`
+      document.body.appendChild(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
+      onNotice(`${downloadLink.download} download started.`)
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to download this rendition.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="asset-modal rendition-modal" onClick={(event) => event.stopPropagation()} aria-labelledby="rendition-title">
+        <button className="modal-close" type="button" onClick={onClose} disabled={isLoading} aria-label="Close rendition editor">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">IMAGE EXPORT</p>
+          <h3 id="rendition-title">Resize or convert</h3>
+          <p>{asset.name} · Original stays unchanged</p>
+        </div>
+
+        <div className="rendition-controls">
+          <label>
+            <span>Format</span>
+            <select value={outputFormat} onChange={(event) => setOutputFormat(event.target.value)} disabled={isLoading}>
+              <option value="jpg">JPEG</option>
+              <option value="png">PNG</option>
+              <option value="webp">WebP</option>
+            </select>
+          </label>
+          <label>
+            <span>Max width (px)</span>
+            <input type="number" min="1" max="4096" step="1" value={width} onChange={(event) => setWidth(event.target.value)} disabled={isLoading} />
+          </label>
+          <label>
+            <span>Max height (px)</span>
+            <input type="number" min="1" max="4096" step="1" value={height} onChange={(event) => setHeight(event.target.value)} disabled={isLoading} />
+          </label>
+          <label className="rendition-quality">
+            <span>Quality <strong>{quality}</strong></span>
+            <input type="range" min="30" max="95" value={quality} onChange={(event) => setQuality(Number(event.target.value))} disabled={isLoading || outputFormat === 'png'} />
+            <small>{outputFormat === 'png' ? 'PNG uses lossless compression.' : 'Higher quality creates a larger file.'}</small>
+          </label>
+        </div>
+
+        {error && <p className="rendition-error" role="alert">{error}</p>}
+        <div className="rendition-preview">
+          {previewUrl ? <img src={previewUrl} alt={`${asset.name} rendition preview`} /> : <span>Generate a preview to inspect the resized output.</span>}
+        </div>
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose} disabled={isLoading}>Cancel</button>
+          <button type="button" className="ghost create-cancel" onClick={generatePreview} disabled={isLoading}>{isLoading ? 'Processing…' : 'Preview'}</button>
+          <button type="button" className="upload create-submit" onClick={downloadRendition} disabled={isLoading}>{isLoading ? 'Processing…' : 'Download rendition'}</button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function ActivityFeed({ activities }) {
   if (!activities.length) {
     return <div className="empty activity-empty"><strong>No activity yet</strong><span>Actions in your workspace will appear here in real time.</span></div>
@@ -166,6 +283,7 @@ export function AssetGrid({
   onToggleMenu,
   onOpenPreview,
   onDownload,
+  onOpenRendition,
   onRename,
   onEditMetadata,
   onSubmitForReview,
@@ -203,6 +321,7 @@ export function AssetGrid({
           onToggleMenu={onToggleMenu}
           onOpenPreview={onOpenPreview}
           onDownload={onDownload}
+          onOpenRendition={onOpenRendition}
           onRename={onRename}
           onEditMetadata={onEditMetadata}
           onSubmitForReview={onSubmitForReview}

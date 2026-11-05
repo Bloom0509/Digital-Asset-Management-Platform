@@ -599,6 +599,8 @@ class AssetViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'This asset does not have a stored file.'}, status=status.HTTP_404_NOT_FOUND)
         if not asset.file.storage.exists(asset.file.name):
             return Response({'detail': 'The stored asset file is missing.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.query_params.get('rendition') == '1':
+            return self._render_rendition(asset, request)
 
         if request.query_params.get('thumbnail') == '1':
             if not asset.content_type.startswith('image/'):
@@ -635,6 +637,78 @@ class AssetViewSet(viewsets.ModelViewSet):
             as_attachment=asset.content_type not in safe_inline_types,
             filename=Path(asset.name).name,
             content_type=asset.content_type,
+        )
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Content-Security-Policy'] = "default-src 'none'; sandbox"
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+    @staticmethod
+    def _render_rendition(asset, request):
+        if not asset.content_type.startswith('image/'):
+            return Response({'detail': 'Renditions are available for image assets only.'}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+        output_format = request.query_params.get('output_format', 'jpg').lower()
+        formats = {
+            'jpg': ('JPEG', 'jpeg'),
+            'jpeg': ('JPEG', 'jpeg'),
+            'png': ('PNG', 'png'),
+            'webp': ('WEBP', 'webp'),
+        }
+        if output_format not in formats:
+            return Response({'format': ['Choose one of: jpg, png, webp.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            width = int(request.query_params.get('width', '1920'))
+            height = int(request.query_params.get('height', '1920'))
+            quality = int(request.query_params.get('quality', '82'))
+        except (TypeError, ValueError):
+            return Response({'detail': 'Width, height, and quality must be integers.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not 1 <= width <= 4096 or not 1 <= height <= 4096:
+            return Response({'detail': 'Width and height must be between 1 and 4096 pixels.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not 30 <= quality <= 95:
+            return Response({'detail': 'Quality must be between 30 and 95.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from PIL import Image, ImageOps
+
+            output = BytesIO()
+            with asset.file.open('rb') as source_file:
+                with Image.open(source_file) as image:
+                    if image.width * image.height > 20_000_000:
+                        return Response({'detail': 'Image dimensions are too large to process.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+                    image = ImageOps.exif_transpose(image)
+                    image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                    pillow_format, extension = formats[output_format]
+                    save_options = {}
+                    if pillow_format == 'JPEG':
+                        if image.mode not in ('RGB', 'L'):
+                            if 'A' in image.getbands():
+                                rgba = image.convert('RGBA')
+                                background = Image.new('RGB', rgba.size, 'white')
+                                background.paste(rgba, mask=rgba.getchannel('A'))
+                                image = background
+                            else:
+                                image = image.convert('RGB')
+                        if image.mode == 'L':
+                            image = image.convert('RGB')
+                        save_options = {'quality': quality, 'optimize': True}
+                    elif pillow_format == 'WEBP':
+                        if image.mode not in ('RGB', 'RGBA'):
+                            image = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+                        save_options = {'quality': quality, 'method': 6}
+                    else:
+                        save_options = {'optimize': True, 'compress_level': round((95 - quality) * 9 / 65)}
+                    image.save(output, format=pillow_format, **save_options)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            return Response({'detail': 'Unable to generate this image rendition.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        filename = f'{Path(asset.name).stem or "asset"}-{width}x{height}.{extension}'
+        response = FileResponse(
+            BytesIO(output.getvalue()),
+            as_attachment=True,
+            filename=filename,
+            content_type=f'image/{extension}',
         )
         response['X-Content-Type-Options'] = 'nosniff'
         response['Content-Security-Policy'] = "default-src 'none'; sandbox"

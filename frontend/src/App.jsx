@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RenditionModal, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -622,6 +622,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [uploadItems, setUploadItems] = useState([])
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
+  const [renditionAsset, setRenditionAsset] = useState(null)
   const [metadataAsset, setMetadataAsset] = useState(null)
   const [metadataForm, setMetadataForm] = useState(metadataFormFromAsset({}))
   const [assetVersions, setAssetVersions] = useState([])
@@ -1375,6 +1376,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       showNotice(`${asset.name} download started.`)
     }
   }
+
+  const openRenditionEditor = (asset) => setRenditionAsset(asset)
 
   const deleteAsset = async (asset) => {
     try {
@@ -2271,6 +2274,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               onToggleMenu={(assetKey) => setMenu(menu === assetKey ? null : assetKey)}
               onOpenPreview={openAssetPreview}
               onDownload={downloadAsset}
+              onOpenRendition={openRenditionEditor}
               onRename={renameAsset}
               onEditMetadata={openMetadataEditor}
               onSubmitForReview={submitAssetForReview}
@@ -2502,6 +2506,12 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         </div>
       )}
       <AssetPreviewModal asset={previewAsset} onClose={closeAssetPreview} />
+      <RenditionModal
+        asset={renditionAsset}
+        apiRequest={apiRequest}
+        onClose={() => setRenditionAsset(null)}
+        onNotice={showNotice}
+      />
       {bulkImportOpen && <BulkImportModal
         files={bulkImportFiles}
         manifest={bulkImportManifest}

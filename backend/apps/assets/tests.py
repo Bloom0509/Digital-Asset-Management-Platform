@@ -333,6 +333,51 @@ class AssetAccessTests(TestCase):
                     self.assertLessEqual(thumbnail.width, 640)
                     self.assertLessEqual(thumbnail.height, 480)
 
+    def test_image_rendition_generates_selected_format_and_bounded_dimensions(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                user = get_user_model().objects.create_user(
+                    username=f"rendition-user-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                client = APIClient()
+                client.force_authenticate(user=user)
+                original = BytesIO()
+                Image.new("RGB", (640, 480), color="navy").save(original, format="PNG")
+                original.seek(0)
+                upload_response = client.post(
+                    "/api/assets/upload/",
+                    {"file": SimpleUploadedFile("campaign.png", original.read(), content_type="image/png")},
+                    format="multipart",
+                )
+                self.assertEqual(upload_response.status_code, 201, upload_response.content)
+                asset_id = upload_response.json()["id"]
+                asset = Asset.objects.get(pk=asset_id)
+                self.assertEqual(asset.tenant_id, user.active_tenant_id)
+                self.assertTrue(asset.file.storage.exists(asset.file.name))
+                self.assertEqual(client.get(reverse("asset-detail", args=[asset_id])).status_code, 200)
+                original_response = client.get(upload_response.json()["file_url"])
+                self.assertEqual(original_response.status_code, 200)
+                self.assertTrue(b"".join(original_response.streaming_content))
+
+                rendition_response = client.get(
+                    upload_response.json()["file_url"],
+                    {"rendition": "1", "output_format": "webp", "width": 120, "height": 80, "quality": 74},
+                )
+
+                self.assertEqual(rendition_response.status_code, 200)
+                self.assertEqual(rendition_response["Content-Type"], "image/webp")
+                self.assertIn("attachment", rendition_response["Content-Disposition"])
+                self.assertIn("120x80.webp", rendition_response["Content-Disposition"])
+                with Image.open(BytesIO(b"".join(rendition_response.streaming_content))) as rendition:
+                    self.assertLessEqual(rendition.width, 120)
+                    self.assertLessEqual(rendition.height, 80)
+
+                invalid_quality_response = client.get(
+                    upload_response.json()["file_url"],
+                    {"rendition": "1", "output_format": "png", "quality": 100},
+                )
+                self.assertEqual(invalid_quality_response.status_code, 400)
+
     def test_missing_stored_asset_file_returns_not_found_for_thumbnail_and_download(self):
         user = get_user_model().objects.create_user(
             username=f"missing-file-{uuid.uuid4().hex[:8]}", password="StrongPass123"

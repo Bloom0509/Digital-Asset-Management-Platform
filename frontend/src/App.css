@@ -374,6 +374,103 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   font-weight: 400;
 }
 
+.rendition-modal {
+  display: grid;
+  gap: 16px;
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.rendition-modal .asset-modal-copy {
+  margin: 0;
+}
+
+.rendition-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rendition-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rendition-controls select,
+.rendition-controls input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 5px;
+  background: var(--input);
+  color: var(--text);
+  font: 400 12px Arial, sans-serif;
+}
+
+.rendition-controls .rendition-quality {
+  grid-column: 1 / -1;
+}
+
+.rendition-quality > span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.rendition-quality input[type="range"] {
+  width: 100%;
+  accent-color: #547a64;
+}
+
+.rendition-quality small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.rendition-preview {
+  display: grid;
+  min-height: 180px;
+  max-height: 34vh;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  background: var(--panel-alt);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rendition-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 34vh;
+  object-fit: contain;
+}
+
+.rendition-error {
+  margin: 0;
+  color: #a63e2f;
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  .rendition-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rendition-controls .rendition-quality {
+    grid-column: 1 / -1;
+  }
+}
+
 .theme-dark .approval-status { background: #29332d; color: #d1ded3; }
 .theme-dark .approval-in_review { background: #493c20; color: #f2d88e; }
 .theme-dark .approval-changes_requested { background: #4a2d28; color: #f0b29f; }
