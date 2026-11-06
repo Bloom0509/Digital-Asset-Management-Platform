@@ -127,6 +127,68 @@ export function RequestChangesModal({ asset, note, isSaving, onNoteChange, onClo
   )
 }
 
+export function AssetAuditModal({ asset, events, isLoading, error, onClose }) {
+  if (!asset) return null
+  const actionLabels = {
+    uploaded: 'Uploaded',
+    replaced: 'Replaced file',
+    restored: 'Restored',
+    downloaded: 'Downloaded',
+    shared: 'Shared',
+  }
+
+  const describeEvent = (event) => {
+    const details = event.details || {}
+    if (event.action === 'uploaded' || event.action === 'replaced') {
+      return [details.filename, details.content_type, details.size_bytes ? formatStorageSize(details.size_bytes) : '']
+        .filter(Boolean)
+        .join(' · ')
+    }
+    if (event.action === 'restored') {
+      return details.source === 'version' ? `Version ${details.version_number}` : 'From Trash'
+    }
+    if (event.action === 'downloaded' && details.rendition) {
+      return `${details.format?.toUpperCase()} · ${details.width}×${details.height} · quality ${details.quality}`
+    }
+    return event.action === 'shared' ? 'Workspace link' : ''
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="asset-modal asset-audit-modal" onClick={(event) => event.stopPropagation()} aria-labelledby="asset-audit-title">
+        <button className="modal-close" type="button" onClick={onClose} aria-label="Close audit history">×</button>
+        <div className="asset-modal-copy">
+          <p className="eyebrow">ASSET HISTORY</p>
+          <h3 id="asset-audit-title">Audit trail</h3>
+          <p>{asset.name}</p>
+        </div>
+        {error ? <p className="asset-audit-state" role="alert">{error}</p> : isLoading ? (
+          <p className="asset-audit-state" role="status">Loading history…</p>
+        ) : events.length ? (
+          <ol className="asset-audit-list">
+            {events.map((event) => (
+              <li key={event.id}>
+                <span className={`asset-audit-marker audit-${event.action}`} aria-hidden="true" />
+                <div className="asset-audit-entry">
+                  <div className="asset-audit-entry-heading">
+                    <strong>{actionLabels[event.action] || event.action}</strong>
+                    <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
+                  </div>
+                  <span>{event.actor_name}</span>
+                  {describeEvent(event) && <small>{describeEvent(event)}</small>}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : <p className="asset-audit-state">No audit events recorded yet.</p>}
+        <div className="create-asset-actions">
+          <button type="button" className="ghost create-cancel" onClick={onClose}>Close</button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function RenditionModal({ asset, apiRequest, onClose, onNotice }) {
   const [outputFormat, setOutputFormat] = useState('jpg')
   const [width, setWidth] = useState('1920')
@@ -142,7 +204,7 @@ export function RenditionModal({ asset, apiRequest, onClose, onNotice }) {
 
   if (!asset) return null
 
-  const getRenditionUrl = () => {
+  const getRenditionUrl = (download = false) => {
     const params = new URLSearchParams({
       rendition: '1',
       output_format: outputFormat,
@@ -150,11 +212,12 @@ export function RenditionModal({ asset, apiRequest, onClose, onNotice }) {
       height,
       quality: String(quality),
     })
+    if (download) params.set('download', '1')
     return `/api/assets/${asset.id}/file/?${params.toString()}`
   }
 
-  const fetchRendition = async () => {
-    const response = await apiRequest(getRenditionUrl())
+  const fetchRendition = async (download = false) => {
+    const response = await apiRequest(getRenditionUrl(download))
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
       throw new Error(data?.detail || Object.values(data || {}).flat()?.[0] || 'Unable to generate this rendition.')
@@ -179,7 +242,7 @@ export function RenditionModal({ asset, apiRequest, onClose, onNotice }) {
     setIsLoading(true)
     setError('')
     try {
-      const blobUrl = URL.createObjectURL(await fetchRendition())
+      const blobUrl = URL.createObjectURL(await fetchRendition(true))
       const downloadLink = document.createElement('a')
       const name = asset.name.replace(/\.[^.]+$/, '') || 'asset'
       downloadLink.href = blobUrl
@@ -284,6 +347,8 @@ export function AssetGrid({
   onOpenPreview,
   onDownload,
   onOpenRendition,
+  onOpenAudit,
+  onShare,
   onRename,
   onEditMetadata,
   onSubmitForReview,
@@ -322,6 +387,8 @@ export function AssetGrid({
           onOpenPreview={onOpenPreview}
           onDownload={onDownload}
           onOpenRendition={onOpenRendition}
+          onOpenAudit={onOpenAudit}
+          onShare={onShare}
           onRename={onRename}
           onEditMetadata={onEditMetadata}
           onSubmitForReview={onSubmitForReview}

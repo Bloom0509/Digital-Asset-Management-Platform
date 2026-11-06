@@ -461,6 +461,99 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
   font-size: 12px;
 }
 
+.asset-audit-modal {
+  display: grid;
+  gap: 14px;
+  width: min(600px, 92vw);
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.asset-audit-modal .asset-modal-copy {
+  margin: 0;
+}
+
+.asset-audit-list {
+  display: grid;
+  gap: 0;
+  max-height: 48vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+}
+
+.asset-audit-list li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 0 0 18px;
+}
+
+.asset-audit-list li:not(:last-child)::after {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--toolbar-border);
+  content: '';
+}
+
+.asset-audit-marker {
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: #779b83;
+  box-shadow: 0 0 0 1px var(--toolbar-border);
+}
+
+.audit-replaced { background: #d78368; }
+.audit-restored { background: #7d9bb5; }
+.audit-downloaded { background: #c3a746; }
+.audit-shared { background: #8d81a8; }
+
+.asset-audit-entry {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.asset-audit-entry-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-audit-entry-heading time,
+.asset-audit-entry > span,
+.asset-audit-entry small,
+.asset-audit-state {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.asset-audit-entry-heading time {
+  text-align: right;
+}
+
+.asset-audit-entry small {
+  overflow-wrap: anywhere;
+}
+
+.asset-audit-state {
+  margin: 0;
+  font-size: 12px;
+}
+
 @media (max-width: 560px) {
   .rendition-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -468,6 +561,16 @@ nav { margin-top: 35px; }.nav-label { padding: 0 12px; margin: 0 0 10px; color: 
 
   .rendition-controls .rendition-quality {
     grid-column: 1 / -1;
+  }
+
+  .asset-audit-entry-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .asset-audit-entry-heading time {
+    text-align: left;
   }
 }
 

@@ -113,3 +113,29 @@ class AssetVersion(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["asset", "version_number"], name="unique_asset_version_number"),
         ]
+
+
+class AssetAuditEvent(models.Model):
+    class Action(models.TextChoices):
+        UPLOADED = "uploaded", "Uploaded"
+        REPLACED = "replaced", "Replaced"
+        RESTORED = "restored", "Restored"
+        DOWNLOADED = "downloaded", "Downloaded"
+        SHARED = "shared", "Shared"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="audit_events")
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="asset_audit_events",
+    )
+    action = models.CharField(max_length=16, choices=Action.choices)
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["asset", "created_at"])]

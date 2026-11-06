@@ -13,11 +13,70 @@ from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.assets.models import Asset, AssetVersion
+from apps.assets.models import Asset, AssetAuditEvent, AssetVersion
 from apps.tenants.models import ActivityEvent, Membership
 
 
 class AssetAccessTests(TestCase):
+    def test_asset_audit_trail_records_upload_replace_restore_download_and_share(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=Path(media_root)):
+                user = get_user_model().objects.create_user(
+                    username=f"asset-audit-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                client = APIClient()
+                client.force_authenticate(user=user)
+                original = BytesIO()
+                Image.new("RGB", (40, 30), color="green").save(original, format="PNG")
+                original.seek(0)
+                upload_response = client.post(
+                    "/api/assets/upload/",
+                    {"file": SimpleUploadedFile("audit-image.png", original.read(), content_type="image/png")},
+                    format="multipart",
+                )
+                self.assertEqual(upload_response.status_code, 201, upload_response.content)
+                asset_id = upload_response.json()["id"]
+                self.assertTrue(AssetAuditEvent.objects.filter(
+                    asset_id=asset_id,
+                    actor=user,
+                    action=AssetAuditEvent.Action.UPLOADED,
+                ).exists())
+
+                replacement = BytesIO()
+                Image.new("RGB", (24, 16), color="blue").save(replacement, format="PNG")
+                replacement.seek(0)
+                replace_response = client.post(
+                    f"/api/assets/{asset_id}/replace-file/",
+                    {"file": SimpleUploadedFile("replacement.png", replacement.read(), content_type="image/png")},
+                    format="multipart",
+                )
+                self.assertEqual(replace_response.status_code, 200, replace_response.content)
+                version = client.get(f"/api/assets/{asset_id}/versions/").json()[0]
+                restore_response = client.post(f"/api/assets/{asset_id}/versions/{version['id']}/restore/", format="json")
+                self.assertEqual(restore_response.status_code, 200, restore_response.content)
+
+                download_response = client.get(f"/api/assets/{asset_id}/file/?download=1")
+                self.assertEqual(download_response.status_code, 200)
+                b"".join(download_response.streaming_content)
+                share_response = client.post(reverse("asset-share", args=[asset_id]), format="json")
+                self.assertEqual(share_response.status_code, 201, share_response.content)
+
+                audit_response = client.get(reverse("asset-audit", args=[asset_id]))
+                self.assertEqual(audit_response.status_code, 200, audit_response.content)
+                self.assertEqual(
+                    [event["action"] for event in audit_response.json()],
+                    ["shared", "downloaded", "restored", "replaced", "uploaded"],
+                )
+                self.assertTrue(all(event["actor_name"] == user.username for event in audit_response.json()))
+                self.assertEqual(audit_response.json()[1]["details"]["rendition"], False)
+
+                outsider = get_user_model().objects.create_user(
+                    username=f"asset-audit-outsider-{uuid.uuid4().hex[:8]}", password="StrongPass123"
+                )
+                outsider_client = APIClient()
+                outsider_client.force_authenticate(user=outsider)
+                self.assertEqual(outsider_client.get(reverse("asset-audit", args=[asset_id])).status_code, 404)
+
     def test_asset_review_workflow_requires_admin_review_and_resets_after_edits(self):
         admin = get_user_model().objects.create_user(
             username=f"review-admin-{uuid.uuid4().hex[:8]}", password="StrongPass123"

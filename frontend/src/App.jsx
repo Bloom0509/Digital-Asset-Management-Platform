@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RenditionModal, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetAuditModal, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RenditionModal, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -623,6 +623,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [menu, setMenu] = useState(null)
   const [previewAsset, setPreviewAsset] = useState(null)
   const [renditionAsset, setRenditionAsset] = useState(null)
+  const [auditAsset, setAuditAsset] = useState(null)
+  const [auditEvents, setAuditEvents] = useState([])
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false)
+  const [auditError, setAuditError] = useState('')
   const [metadataAsset, setMetadataAsset] = useState(null)
   const [metadataForm, setMetadataForm] = useState(metadataFormFromAsset({}))
   const [assetVersions, setAssetVersions] = useState([])
@@ -646,6 +650,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [isSavingMember, setIsSavingMember] = useState(false)
   const previewObjectUrl = useRef(null)
   const previewRequest = useRef(0)
+  const openedSharedAssetId = useRef('')
   const activeWorkspaceRole = currentWorkspace?.role || 'viewer'
   const canManageWorkspace = ['admin', 'editor'].includes(activeWorkspaceRole)
   const [customAssetOpen, setCustomAssetOpen] = useState(false)
@@ -781,6 +786,36 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     return () => { cancelled = true }
   }, [apiRequest, currentWorkspace?.id])
+
+  useEffect(() => {
+    const sharedAssetId = new URLSearchParams(location.search).get('asset')
+    if (!sharedAssetId) {
+      openedSharedAssetId.current = ''
+      return
+    }
+    if (openedSharedAssetId.current === sharedAssetId) return
+    const asset = assets.find((item) => item.id === sharedAssetId)
+    if (!asset) return
+
+    openedSharedAssetId.current = sharedAssetId
+    navigate(workspacePath('/assets'), { replace: true })
+    openAssetPreview(asset)
+  }, [assets, location.search, navigate, openAssetPreview, currentWorkspace?.id])
+
+  useEffect(() => {
+    const sharedAssetId = new URLSearchParams(location.search).get('asset')
+    if (!sharedAssetId) {
+      openedSharedAssetId.current = ''
+      return
+    }
+    if (openedSharedAssetId.current === sharedAssetId) return
+    const asset = assets.find((item) => item.id === sharedAssetId)
+    if (!asset) return
+
+    openedSharedAssetId.current = sharedAssetId
+    navigate(workspacePath('/assets'), { replace: true })
+    openAssetPreview(asset)
+  }, [assets, location.search, navigate, openAssetPreview, currentWorkspace?.id])
 
   useEffect(() => {
     if (!currentWorkspace?.id) return undefined
@@ -1190,6 +1225,42 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     setMenu(null)
   }
 
+  const openAssetAudit = async (asset) => {
+    setAuditAsset(asset)
+    setAuditEvents([])
+    setAuditError('')
+    setIsLoadingAudit(true)
+    try {
+      const response = await apiRequest(`/api/assets/${asset.id}/audit/`)
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to load the asset audit trail.')
+      setAuditEvents(Array.isArray(data) ? data : [])
+    } catch (error) {
+      setAuditError(error.message || 'Unable to load the asset audit trail.')
+    } finally {
+      setIsLoadingAudit(false)
+    }
+  }
+
+  const shareAssetLink = async (asset) => {
+    const shareUrl = new URL(workspacePath('/assets'), window.location.origin)
+    shareUrl.searchParams.set('asset', asset.id)
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl.toString())
+      } else if (!window.prompt('Copy this workspace link:', shareUrl.toString())) {
+        return
+      }
+
+      const response = await apiRequest(`/api/assets/${asset.id}/share/`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.detail || 'Unable to record this share.')
+      showNotice(`Workspace link to “${asset.name}” copied.`)
+    } catch (error) {
+      showNotice(error.message || 'Unable to share this asset.')
+    }
+  }
+
   const applyAssetReviewUpdate = (data) => {
     const mappedAsset = mapApiAsset(data)
     const replaceAsset = (asset) => asset.id === mappedAsset.id
@@ -1348,7 +1419,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     }
 
     try {
-      const response = await apiRequest(sourceUrl)
+      let downloadUrl = sourceUrl
+      if (asset.file_url && sourceUrl === asset.file_url) {
+        const url = new URL(sourceUrl, window.location.origin)
+        url.searchParams.set('download', '1')
+        downloadUrl = `${url.pathname}${url.search}`
+      }
+      const response = await apiRequest(downloadUrl)
 
       if (!response.ok) {
         throw new Error('Unable to download this asset.')
@@ -2275,6 +2352,8 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               onOpenPreview={openAssetPreview}
               onDownload={downloadAsset}
               onOpenRendition={openRenditionEditor}
+              onOpenAudit={openAssetAudit}
+              onShare={shareAssetLink}
               onRename={renameAsset}
               onEditMetadata={openMetadataEditor}
               onSubmitForReview={submitAssetForReview}
@@ -2292,6 +2371,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       </main>
 
       <ToastNotification message={notice} onDismiss={() => setNotice('')} />
+      <AssetAuditModal
+        asset={auditAsset}
+        events={auditEvents}
+        isLoading={isLoadingAudit}
+        error={auditError}
+        onClose={() => setAuditAsset(null)}
+      />
       <RequestChangesModal
         asset={reviewAsset}
         note={reviewNote}

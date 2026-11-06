@@ -6,7 +6,7 @@ from django.conf import settings
 from django.urls import reverse
 from rest_framework import serializers
 
-from .models import Asset, AssetVersion
+from .models import Asset, AssetAuditEvent, AssetVersion
 
 
 class AssetSerializer(serializers.ModelSerializer):
@@ -105,6 +105,18 @@ class AssetVersionSerializer(serializers.ModelSerializer):
             "asset-version-file",
             kwargs={"pk": version.asset_id, "version_id": version.pk},
         )
+
+
+class AssetAuditEventSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AssetAuditEvent
+        fields = ("id", "asset", "actor", "actor_name", "action", "details", "created_at")
+        read_only_fields = fields
+
+    def get_actor_name(self, event):
+        return event.actor.get_username() if event.actor_id else "Deleted user"
 
 
 class AssetUploadSerializer(serializers.Serializer):

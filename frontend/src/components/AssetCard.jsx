@@ -1,10 +1,12 @@
 import { getAssetSelectionKey } from './assetSelection.js'
 
-function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onOpenRendition, onRename, onEditMetadata, onSubmitForReview, onApprove, onRequestChanges, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
+function AssetCardMenu({ asset, activeSection, canManageWorkspace, isAdmin, onOpenPreview, onDownload, onOpenRendition, onOpenAudit, onShare, onRename, onEditMetadata, onSubmitForReview, onApprove, onRequestChanges, onRestore, onPermanentlyDelete, onRemoveFromCollection, onAddToCollection, onDelete, onClose }) {
   return (
     <div className="menu">
       <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenPreview(asset) }}>Open preview</button>
       <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(asset) }}>Download</button>
+      {activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenAudit(asset) }}>Audit history</button>}
+      {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onShare(asset) }}>Share workspace link</button>}
       {asset.kind === 'image' && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onOpenRendition(asset) }}>Resize or convert</button>}
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onRename(asset) }}>Rename</button>}
       {canManageWorkspace && activeSection !== 'trash' && <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); onEditMetadata(asset) }}>Edit asset</button>}
@@ -64,6 +66,8 @@ export default function AssetCard({
   onOpenPreview,
   onDownload,
   onOpenRendition,
+  onOpenAudit,
+  onShare,
   onRename,
   onEditMetadata,
   onSubmitForReview,
@@ -115,6 +119,8 @@ export default function AssetCard({
             onOpenPreview={onOpenPreview}
             onDownload={onDownload}
             onOpenRendition={onOpenRendition}
+            onOpenAudit={onOpenAudit}
+            onShare={onShare}
             onRename={onRename}
             onEditMetadata={onEditMetadata}
             onSubmitForReview={onSubmitForReview}

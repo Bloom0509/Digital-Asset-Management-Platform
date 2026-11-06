@@ -24,8 +24,8 @@ from apps.tenants.models import Membership, Tenant
 from apps.tenants.activity import record_activity
 from apps.tenants.permissions import WorkspaceRolePermission
 
-from .models import Asset, AssetVersion, compute_file_hash
-from .serializers import AssetSerializer, AssetUploadSerializer, AssetVersionSerializer, BulkAssetMetadataSerializer
+from .models import Asset, AssetAuditEvent, AssetVersion, compute_file_hash
+from .serializers import AssetAuditEventSerializer, AssetSerializer, AssetUploadSerializer, AssetVersionSerializer, BulkAssetMetadataSerializer
 
 
 class OptionalJWTAuthentication(JWTAuthentication):
@@ -70,6 +70,15 @@ class AssetViewSet(viewsets.ModelViewSet):
     def _delete_file_after_commit(storage, file_name):
         if file_name:
             transaction.on_commit(lambda: storage.delete(file_name))
+
+    @staticmethod
+    def _record_asset_audit(asset, actor, action, details=None):
+        return AssetAuditEvent.objects.create(
+            asset=asset,
+            actor=actor,
+            action=action,
+            details=details or {},
+        )
 
     def get_authenticators(self):
         if self.request.method == 'GET':
@@ -127,6 +136,19 @@ class AssetViewSet(viewsets.ModelViewSet):
         instance.deleted_at = timezone.now()
         instance.save(update_fields=['deleted_at', 'updated_at'])
         record_activity(instance.tenant, self.request.user, f'Moved “{instance.name}” to trash.')
+
+    @action(detail=True, methods=['get'], url_path='audit')
+    def audit(self, request, pk=None):
+        asset = self.get_object()
+        events = asset.audit_events.select_related('actor').all()
+        return Response(AssetAuditEventSerializer(events, many=True).data)
+
+    @action(detail=True, methods=['post'])
+    def share(self, request, pk=None):
+        asset = self.get_object()
+        self._record_asset_audit(asset, request.user, AssetAuditEvent.Action.SHARED, {'scope': 'workspace'})
+        record_activity(asset.tenant, request.user, f'Shared a workspace link to “{asset.name}”.')
+        return Response({'detail': 'Workspace share recorded.'}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='storage-usage')
     def storage_usage(self, request):
@@ -210,6 +232,7 @@ class AssetViewSet(viewsets.ModelViewSet):
         asset = self.get_object()
         asset.deleted_at = None
         asset.save(update_fields=['deleted_at', 'updated_at'])
+        self._record_asset_audit(asset, request.user, AssetAuditEvent.Action.RESTORED, {'source': 'trash'})
         record_activity(asset.tenant, request.user, f'Restored “{asset.name}” from trash.')
         return Response(self.get_serializer(asset).data, status=status.HTTP_200_OK)
 
@@ -366,6 +389,12 @@ class AssetViewSet(viewsets.ModelViewSet):
             self._delete_file_after_commit(old_storage, old_file_name)
 
         record_activity(asset.tenant, request.user, f'Replaced the file for “{asset.name}”.')
+        self._record_asset_audit(
+            asset,
+            request.user,
+            AssetAuditEvent.Action.REPLACED,
+            {'filename': Path(uploaded_file.name).name, 'content_type': content_type, 'size_bytes': uploaded_file.size},
+        )
         return Response(self.get_serializer(asset).data)
 
     @action(detail=True, methods=['post'], url_path='submit-for-review')
@@ -492,6 +521,12 @@ class AssetViewSet(viewsets.ModelViewSet):
             request.user,
             f'Restored version {version.version_number} of “{asset.name}”.',
         )
+        self._record_asset_audit(
+            asset,
+            request.user,
+            AssetAuditEvent.Action.RESTORED,
+            {'source': 'version', 'version_number': version.version_number},
+        )
         return Response(self.get_serializer(asset).data)
 
     @action(detail=False, methods=['post'], url_path='bulk-metadata')
@@ -589,6 +624,12 @@ class AssetViewSet(viewsets.ModelViewSet):
         asset.save()
         asset.object_key = asset.file.name
         asset.save(update_fields=['object_key'])
+        self._record_asset_audit(
+            asset,
+            request.user,
+            AssetAuditEvent.Action.UPLOADED,
+            {'filename': Path(uploaded_file.name).name, 'content_type': content_type, 'size_bytes': uploaded_file.size},
+        )
         record_activity(tenant, request.user, f'Uploaded “{asset.name}” ({asset.size_bytes} bytes).')
         return Response(self.get_serializer(asset).data, status=status.HTTP_201_CREATED)
 
@@ -632,12 +673,15 @@ class AssetViewSet(viewsets.ModelViewSet):
             'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
             'video/mp4', 'video/webm', 'video/quicktime',
         }
+        is_download = request.query_params.get('download') == '1'
         response = FileResponse(
             asset.file.open('rb'),
-            as_attachment=asset.content_type not in safe_inline_types,
+            as_attachment=is_download or asset.content_type not in safe_inline_types,
             filename=Path(asset.name).name,
             content_type=asset.content_type,
         )
+        if is_download:
+            self._record_asset_audit(asset, request.user, AssetAuditEvent.Action.DOWNLOADED, {'rendition': False})
         response['X-Content-Type-Options'] = 'nosniff'
         response['Content-Security-Policy'] = "default-src 'none'; sandbox"
         response['Cache-Control'] = 'private, no-store'
@@ -710,6 +754,13 @@ class AssetViewSet(viewsets.ModelViewSet):
             filename=filename,
             content_type=f'image/{extension}',
         )
+        if request.query_params.get('download') == '1':
+            AssetViewSet._record_asset_audit(
+                asset,
+                request.user,
+                AssetAuditEvent.Action.DOWNLOADED,
+                {'rendition': True, 'format': extension, 'width': width, 'height': height, 'quality': quality},
+            )
         response['X-Content-Type-Options'] = 'nosniff'
         response['Content-Security-Policy'] = "default-src 'none'; sandbox"
         response['Cache-Control'] = 'private, no-store'
@@ -730,4 +781,5 @@ class AssetViewSet(viewsets.ModelViewSet):
             self.request.user.save(update_fields=["active_tenant"])
 
         asset = serializer.save(tenant=tenant, uploaded_by=self.request.user)
+        self._record_asset_audit(asset, self.request.user, AssetAuditEvent.Action.UPLOADED, {'source': 'asset_entry'})
         record_activity(tenant, self.request.user, f'Added asset “{asset.name}”.')
