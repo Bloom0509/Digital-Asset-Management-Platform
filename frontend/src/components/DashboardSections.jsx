@@ -319,6 +319,89 @@ export function ActivityFeed({ activities }) {
   )
 }
 
+export function ReviewInbox({ assets, isAdmin, onOpenPreview, onApprove, onRequestChanges }) {
+  const [status, setStatus] = useState('in_review')
+  const [submitter, setSubmitter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [query, setQuery] = useState('')
+  const reviewStatuses = ['in_review', 'changes_requested', 'approved']
+  const statusLabels = {
+    in_review: 'In review',
+    changes_requested: 'Changes requested',
+    approved: 'Approved',
+  }
+  const submitters = [...new Set(assets.map((asset) => asset.submitted_by_name).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b))
+  const filteredAssets = assets.filter((asset) => {
+    const assetStatus = asset.approval_status || 'draft'
+    if (!reviewStatuses.includes(assetStatus)) return false
+    const submittedTime = Date.parse(asset.submitted_at || '')
+    const startTime = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null
+    const endTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null
+    const matchesQuery = `${asset.name} ${asset.description || ''} ${(asset.tags || []).join(' ')}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+    return (status === 'all' || assetStatus === status)
+      && (!submitter || asset.submitted_by_name === submitter)
+      && (!startTime || (Number.isFinite(submittedTime) && submittedTime >= startTime))
+      && (!endTime || (Number.isFinite(submittedTime) && submittedTime <= endTime))
+      && matchesQuery
+  }).sort((a, b) => Date.parse(b.submitted_at || '') - Date.parse(a.submitted_at || ''))
+  const pendingCount = assets.filter((asset) => asset.approval_status === 'in_review').length
+
+  if (!isAdmin) {
+    return <div className="empty review-inbox-empty"><strong>Admin access required</strong><span>Only workspace admins can review and approve assets.</span></div>
+  }
+
+  return (
+    <section className="review-inbox" aria-labelledby="review-inbox-title">
+      <header className="review-inbox-heading">
+        <div>
+          <h2 id="review-inbox-title">Review queue</h2>
+          <p>{pendingCount} asset{pendingCount === 1 ? '' : 's'} awaiting approval</p>
+        </div>
+        <label className="review-search"><span>Search</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find an asset" /></label>
+      </header>
+      <div className="review-inbox-filters" aria-label="Filter review queue">
+        <label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value)}>
+          <option value="in_review">Awaiting approval</option>
+          <option value="all">All review statuses</option>
+          <option value="changes_requested">Changes requested</option>
+          <option value="approved">Approved</option>
+        </select></label>
+        <label><span>Submitted by</span><select value={submitter} onChange={(event) => setSubmitter(event.target.value)}>
+          <option value="">Anyone</option>
+          {submitters.map((name) => <option value={name} key={name}>{name}</option>)}
+        </select></label>
+        <label><span>Submitted from</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label>
+        <label><span>Submitted to</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label>
+        {(status !== 'in_review' || submitter || dateFrom || dateTo || query) && <button className="filter-reset" type="button" onClick={() => { setStatus('in_review'); setSubmitter(''); setDateFrom(''); setDateTo(''); setQuery('') }}>Reset filters</button>}
+      </div>
+      {filteredAssets.length ? <div className="review-inbox-list">
+        {filteredAssets.map((asset) => {
+          const assetStatus = asset.approval_status || 'draft'
+          return <article className="review-inbox-item" key={asset.id}>
+            <button className="review-inbox-preview" type="button" onClick={() => onOpenPreview(asset)} aria-label={`Preview ${asset.name}`}>
+              {asset.kind === 'image' || asset.kind === 'video' ? <img src={asset.image} alt="" /> : <span>{asset.type || 'FILE'}</span>}
+            </button>
+            <div className="review-inbox-details">
+              <button className="review-inbox-name" type="button" onClick={() => onOpenPreview(asset)}>{asset.name}</button>
+              <span>Submitted by {asset.submitted_by_name || 'Unknown'} · {asset.submitted_at ? new Date(asset.submitted_at).toLocaleString() : 'Date unavailable'}</span>
+              {asset.review_note && <p className="review-inbox-note">Latest note: {asset.review_note}</p>}
+              <span className={`approval-status approval-${assetStatus}`}>{statusLabels[assetStatus]}</span>
+            </div>
+            <div className="review-inbox-actions">
+              {assetStatus === 'in_review' ? <>
+                <button type="button" className="ghost" onClick={() => onRequestChanges(asset)}>Request changes</button>
+                <button type="button" className="upload" onClick={() => onApprove(asset)}>Approve</button>
+              </> : <button type="button" className="ghost" onClick={() => onOpenPreview(asset)}>Open asset</button>}
+            </div>
+          </article>
+        })}
+      </div> : <div className="empty review-inbox-empty"><strong>No matching assets</strong><span>{status === 'in_review' ? 'New submissions will appear here.' : 'Try changing the filters to see more review activity.'}</span></div>}
+    </section>
+  )
+}
+
 export function CollectionGrid({ collections, getCollectionThumbnails, onSelectCollection }) {
   if (!collections.length) {
     return <div className="empty"><strong>No collections yet</strong><span>Create a collection to start organizing media.</span></div>

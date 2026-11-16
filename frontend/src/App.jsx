@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ActivityFeed, AssetAuditModal, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RenditionModal, RequestChangesModal, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
+import { ActivityFeed, AssetAuditModal, AssetGrid, AssetMetadataFields, AssetMetadataModal, AssetPreviewModal, BulkImportModal, BulkAssetMetadataModal, CollectionGrid, RenditionModal, RequestChangesModal, ReviewInbox, StorageReport, ToastNotification, UploadQueue } from './components/DashboardSections.jsx'
 import BulkAssetActions from './components/BulkAssetActions.jsx'
 import { getAssetSelectionKey } from './components/assetSelection.js'
 import './App.css'
@@ -994,6 +994,10 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
     if (path === '/storage') {
       return { activeSection: 'storage', activeCollectionId: null }
+    }
+
+    if (path === '/review') {
+      return { activeSection: 'review', activeCollectionId: null }
     }
 
     if (path.startsWith('/collections/') || path.startsWith('/collection/')) {
@@ -2140,6 +2144,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           <button className={activeSection === 'collections' || activeSection === 'collection' ? 'active' : ''} type="button" onClick={openCollections}><span>□</span> Collections <b>{collections.length}</b></button>
           <button className={activeSection === 'trash' ? 'active' : ''} type="button" onClick={openTrash}><span>⌫</span> Trash <b>{trashAssets.length}</b></button>
           <p className="nav-label second">Manage</p>
+          {activeWorkspaceRole === 'admin' && <button className={activeSection === 'review' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/review'))}><span>✓</span> Review inbox <b>{assets.filter((asset) => asset.approval_status === 'in_review').length}</b></button>}
           <button className={activeSection === 'activity' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/activity'))}><span>◷</span> Activity <b>{activities.length}</b></button>
           <button className={activeSection === 'storage' ? 'active' : ''} type="button" onClick={() => navigate(workspacePath('/storage'))}><span>▤</span> Storage</button>
           <div className="favorites-panel">
@@ -2158,7 +2163,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : 'All assets'}</strong></div>
+          <div className="breadcrumbs"><span>Library</span><b>/</b><strong>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : activeSection === 'review' ? 'Review inbox' : 'All assets'}</strong></div>
           <div className="top-actions">
             <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? '☀️' : '🌙'}
@@ -2183,9 +2188,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         <section className="content" id="assets">
           <div className="title-row">
             <div>
-              <p className="eyebrow">{activeSection === 'activity' ? 'LIVE UPDATES' : activeSection === 'storage' ? 'WORKSPACE REPORTING' : activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
-              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : activeSection === 'storage' ? '' : totalAssetCount}</span></h1>
-              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : activeSection === 'storage' ? 'Track workspace storage by file type and upload period.' : 'Your asset library is empty until you upload files.'}</p>
+              <p className="eyebrow">{activeSection === 'activity' ? 'LIVE UPDATES' : activeSection === 'storage' ? 'WORKSPACE REPORTING' : activeSection === 'review' ? 'APPROVALS' : activeSection === 'collections' || activeSection === 'collection' ? 'ORGANIZE' : 'LIBRARY'}</p>
+              <h1>{activeSection === 'trash' ? 'Trash' : activeSection === 'collections' ? 'Collections' : activeSection === 'collection' ? activeCollection?.name || 'Collection' : activeSection === 'activity' ? 'Activity' : activeSection === 'storage' ? 'Storage' : activeSection === 'review' ? 'Review inbox' : 'All assets'} <span>{activeSection === 'trash' ? trashAssets.length : activeSection === 'collections' ? collections.length : activeSection === 'collection' ? collectionAssets.length : activeSection === 'activity' ? activities.length : activeSection === 'storage' || activeSection === 'review' ? '' : totalAssetCount}</span></h1>
+              <p className="intro">{activeSection === 'trash' ? 'Deleted assets stay here until you restore or permanently delete them.' : activeSection === 'collections' ? 'Group related media together in collections.' : activeSection === 'collection' ? 'Media saved in this collection.' : activeSection === 'activity' ? 'Live updates from actions happening in your workspace.' : activeSection === 'storage' ? 'Track workspace storage by file type and upload period.' : activeSection === 'review' ? 'Review submitted assets and send decisions back to their editors.' : 'Your asset library is empty until you upload files.'}</p>
             </div>
             {showAssetControls && <button className="ghost" type="button" onClick={() => setSelected((current) => {
               const visibleKeys = visibleAssets.map(getAssetSelectionKey)
@@ -2329,7 +2334,15 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             onClear={() => setSelected([])}
           />}
 
-          {activeSection === 'storage' ? null : activeSection === 'activity' ? (
+          {activeSection === 'storage' ? null : activeSection === 'review' ? (
+            <ReviewInbox
+              assets={assets}
+              isAdmin={activeWorkspaceRole === 'admin'}
+              onOpenPreview={openAssetPreview}
+              onApprove={approveAsset}
+              onRequestChanges={openRequestChanges}
+            />
+          ) : activeSection === 'activity' ? (
             <ActivityFeed activities={activities} />
           ) : activeSection === 'collections' ? (
             <CollectionGrid
