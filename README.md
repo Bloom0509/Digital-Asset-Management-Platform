@@ -3,7 +3,6 @@
 A multi-tenant digital asset management platform with React, Django REST Framework, PostgreSQL, Redis, S3-compatible storage, pgvector, and AI services.
 
 ## Project layout
-
 - `frontend/` React + TypeScript application
 - `backend/` Django + Django REST Framework API
 - `infra/` local PostgreSQL, Redis, and MinIO services
