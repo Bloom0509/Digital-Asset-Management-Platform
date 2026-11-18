@@ -443,12 +443,14 @@ export function AssetGrid({
   onAddToCollection,
   onDelete,
   onToggleStar,
+  isLoading = false,
+  emptyMessage = 'No assets yet',
 }) {
   if (!assets.length) {
     return (
-      <div className="empty">
-        <strong>{activeSection === 'trash' ? 'Trash is empty' : 'No assets yet'}</strong>
-        <span>{activeSection === 'trash' ? 'Deleted assets will appear here.' : 'Upload a new file to start your library.'}</span>
+      <div className="empty" aria-live="polite">
+        <strong>{isLoading ? 'Searching assets…' : activeSection === 'trash' ? 'Trash is empty' : emptyMessage}</strong>
+        <span>{isLoading ? 'Applying your search and filters.' : activeSection === 'trash' ? 'Deleted assets will appear here.' : emptyMessage === 'No matching assets' ? 'Try changing your search or filters.' : 'Upload a new file to start your library.'}</span>
       </div>
     )
   }

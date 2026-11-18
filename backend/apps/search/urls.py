@@ -1,3 +1,7 @@
 from django.urls import path
 
-urlpatterns = []
+from .views import AssetSearchView
+
+urlpatterns = [
+    path("assets/", AssetSearchView.as_view(), name="asset-search"),
+]

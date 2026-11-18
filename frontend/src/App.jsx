@@ -579,6 +579,13 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [filter, setFilter] = useState('all')
+  const [searchResults, setSearchResults] = useState(emptyAssets)
+  const [searchResultCount, setSearchResultCount] = useState(0)
+  const [searchPage, setSearchPage] = useState(1)
+  const [searchTotalPages, setSearchTotalPages] = useState(0)
+  const [assetSearchRefresh, setAssetSearchRefresh] = useState(0)
+  const [isSearchingAssets, setIsSearchingAssets] = useState(false)
+  const [assetSearchError, setAssetSearchError] = useState('')
   const [advancedFilters, setAdvancedFilters] = useState({
     tag: '',
     creator: '',
@@ -841,7 +848,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     return () => { cancelled = true }
   }, [apiRequest, currentWorkspace?.id, storagePeriod, storageReportRequest])
 
-  const protectedFileUrls = [...assets, ...trashAssets, ...collections.flatMap((collection) => collection.assets || [])]
+  const protectedFileUrls = [...assets, ...searchResults, ...trashAssets, ...collections.flatMap((collection) => collection.assets || [])]
     .filter((asset) => asset.thumbnail_url)
     .map((asset) => `${asset.thumbnail_url}\t${asset.updated_at || ''}`)
     .filter(Boolean)
@@ -873,6 +880,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         ? { ...asset, image: previews.get(asset.thumbnail_url) }
         : asset
       setAssets((current) => current.map(attachPreview))
+      setSearchResults((current) => current.map(attachPreview))
       setTrashAssets((current) => current.map(attachPreview))
       setCollections((current) => current.map((collection) => ({
         ...collection,
@@ -1011,6 +1019,52 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
   const activeSection = routeState.activeSection
   const activeCollectionId = routeState.activeCollectionId
   const showAssetControls = ['assets', 'trash', 'collection'].includes(activeSection)
+
+  useEffect(() => {
+    if (!currentWorkspace?.id || activeSection !== 'assets') return undefined
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      const params = new URLSearchParams({ page: String(searchPage), page_size: '24', sort })
+      if (query.trim()) params.set('q', query.trim())
+      if (filter !== 'all') params.set('type', filter)
+      Object.entries({
+        tag: advancedFilters.tag,
+        creator: advancedFilters.creator,
+        campaign: advancedFilters.campaign,
+        license: advancedFilters.license,
+        date_from: advancedFilters.dateFrom,
+        date_to: advancedFilters.dateTo,
+        min_size: advancedFilters.minSize,
+        max_size: advancedFilters.maxSize,
+      }).forEach(([key, value]) => { if (value) params.set(key, value) })
+
+      setIsSearchingAssets(true)
+      setAssetSearchError('')
+      try {
+        const response = await apiRequest(`/api/search/assets/?${params.toString()}`)
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data?.detail || 'Unable to search assets.')
+        if (cancelled) return
+        setSearchResults(Array.isArray(data.results) ? data.results.map(mapApiAsset) : [])
+        setSearchResultCount(Number(data.count || 0))
+        setSearchPage(Number(data.page || 1))
+        setSearchTotalPages(Number(data.total_pages || 0))
+      } catch (error) {
+        if (cancelled) return
+        setAssetSearchError(error.message || 'Unable to search assets.')
+        setSearchResults([])
+        setSearchResultCount(0)
+        setSearchTotalPages(0)
+      } finally {
+        if (!cancelled) setIsSearchingAssets(false)
+      }
+    }, 200)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [activeSection, advancedFilters, apiRequest, assetSearchRefresh, currentWorkspace?.id, filter, query, searchPage, sort])
 
   useEffect(() => {
     window.localStorage.setItem('dam_favorites_by_workspace', JSON.stringify(starredByWorkspace))
@@ -1168,7 +1222,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     licenses: [...new Set(currentAssets.map((asset) => asset.license).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
   }), [currentAssets])
   const selectedAssets = currentAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset)))
-  const visibleAssets = useMemo(() => {
+  const locallyVisibleAssets = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     const filtered = currentAssets.filter((asset) => {
       const createdTime = Date.parse(asset.created_at || '')
@@ -1205,6 +1259,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
     })
     return [...filtered].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0))
   }, [advancedFilters, currentAssets, filter, query, sort])
+  const visibleAssets = activeSection === 'assets'
+    ? searchResults.map((result) => assets.find((asset) => asset.id === result.id) || result)
+    : locallyVisibleAssets
   const activeAdvancedFilterCount = Object.values(advancedFilters).filter(Boolean).length
   const selectedVisibleCount = visibleAssets.filter((asset) => selected.includes(getAssetSelectionKey(asset))).length
   const allVisibleSelected = visibleAssets.length > 0 && selectedVisibleCount === visibleAssets.length
@@ -1468,6 +1525,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
         if (!response.ok) throw new Error('Unable to move this asset to trash.')
       }
       setAssets((current) => current.filter((item) => item.id !== asset.id))
+      setSearchResults((current) => current.filter((item) => item.id !== asset.id))
+      setSearchResultCount((current) => Math.max(0, current - 1))
+      setAssetSearchRefresh((current) => current + 1)
       setTrashAssets((current) => [{ ...asset, deleted_at: new Date().toISOString() }, ...current.filter((item) => item.id !== asset.id)])
       setCollections((current) => current.map((collection) => ({
         ...collection,
@@ -1512,6 +1572,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
       const removedIds = new Set(succeeded.map((asset) => asset.id))
       const deletedAt = new Date().toISOString()
       setAssets((current) => current.filter((asset) => !removedIds.has(asset.id)))
+      setSearchResults((current) => current.filter((asset) => !removedIds.has(asset.id)))
+      setSearchResultCount((current) => Math.max(0, current - removedIds.size))
+      setAssetSearchRefresh((current) => current + 1)
       setTrashAssets((current) => [
         ...succeeded.map((asset) => ({ ...asset, deleted_at: deletedAt })),
         ...current.filter((asset) => !removedIds.has(asset.id)),
@@ -2208,7 +2271,9 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
             </select>
             <select className="sort" value={sort} onChange={(event) => setSort(event.target.value)}>
               <option value="recent">Recently added</option>
+              <option value="oldest">Oldest first</option>
               <option value="name">Name A-Z</option>
+              <option value="size">Largest files</option>
             </select>
             <button className={`view-toggle ${view === 'grid' ? '' : 'muted'}`} type="button" onClick={() => setView('grid')} aria-label="Grid view">▦</button>
             <button className={`view-toggle ${view === 'list' ? '' : 'muted'}`} type="button" onClick={() => setView('list')} aria-label="List view">☷</button>
@@ -2297,7 +2362,7 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
           </div>}
 
           {showAssetControls && <div className="summary">
-            <span><b>{visibleAssets.length}</b> of {currentAssets.length} assets shown</span>
+            <span><b>{activeSection === 'assets' ? searchResultCount : visibleAssets.length}</b> {activeSection === 'assets' ? 'matching assets' : `of ${currentAssets.length} assets shown`}</span>
             <span className="dot-separator" />
             <span>{selected.length ? `${selected.length} selected` : `${totalAssetCount} total`}</span>
             <span className="summary-spacer" />
@@ -2351,34 +2416,45 @@ function DashboardApp({ onLogout, theme, toggleTheme, apiRequest, workspaces, cu
               onSelectCollection={(collection) => navigate(workspacePath(`/collections/${collection.id}`))}
             />
           ) : (
-            <AssetGrid
-              assets={visibleAssets}
-              view={view}
-              selected={selected}
-              starred={starred}
-              activeSection={activeSection}
-              canManageWorkspace={canManageWorkspace}
-              isAdmin={activeWorkspaceRole === 'admin'}
-              menu={menu}
-              onToggleSelect={toggleAssetSelection}
-              onToggleMenu={(assetKey) => setMenu(menu === assetKey ? null : assetKey)}
-              onOpenPreview={openAssetPreview}
-              onDownload={downloadAsset}
-              onOpenRendition={openRenditionEditor}
-              onOpenAudit={openAssetAudit}
-              onShare={shareAssetLink}
-              onRename={renameAsset}
-              onEditMetadata={openMetadataEditor}
-              onSubmitForReview={submitAssetForReview}
-              onApprove={approveAsset}
-              onRequestChanges={openRequestChanges}
-              onRestore={restoreAsset}
-              onPermanentlyDelete={permanentlyDeleteAsset}
-              onRemoveFromCollection={removeAssetFromCollection}
-              onAddToCollection={(asset) => { setAssetToCollect(asset); setMenu(null) }}
-              onDelete={deleteAsset}
-              onToggleStar={toggleStar}
-            />
+            <>
+              {activeSection === 'assets' && isSearchingAssets && visibleAssets.length > 0 && <p className="asset-search-status" role="status">Updating search results…</p>}
+              {activeSection === 'assets' && assetSearchError && <p className="asset-search-error" role="alert">{assetSearchError} <button type="button" className="filter-reset" onClick={() => setAssetSearchRefresh((current) => current + 1)}>Retry</button></p>}
+              <AssetGrid
+                assets={visibleAssets}
+                view={view}
+                selected={selected}
+                starred={starred}
+                activeSection={activeSection}
+                canManageWorkspace={canManageWorkspace}
+                isAdmin={activeWorkspaceRole === 'admin'}
+                menu={menu}
+                onToggleSelect={toggleAssetSelection}
+                onToggleMenu={(assetKey) => setMenu(menu === assetKey ? null : assetKey)}
+                onOpenPreview={openAssetPreview}
+                onDownload={downloadAsset}
+                onOpenRendition={openRenditionEditor}
+                onOpenAudit={openAssetAudit}
+                onShare={shareAssetLink}
+                onRename={renameAsset}
+                onEditMetadata={openMetadataEditor}
+                onSubmitForReview={submitAssetForReview}
+                onApprove={approveAsset}
+                onRequestChanges={openRequestChanges}
+                onRestore={restoreAsset}
+                onPermanentlyDelete={permanentlyDeleteAsset}
+                onRemoveFromCollection={removeAssetFromCollection}
+                onAddToCollection={(asset) => { setAssetToCollect(asset); setMenu(null) }}
+                onDelete={deleteAsset}
+                onToggleStar={toggleStar}
+                isLoading={activeSection === 'assets' && isSearchingAssets}
+                emptyMessage={activeSection === 'assets' && (query.trim() || activeAdvancedFilterCount || filter !== 'all') ? 'No matching assets' : 'No assets yet'}
+              />
+              {activeSection === 'assets' && searchTotalPages > 1 && <nav className="asset-search-pagination" aria-label="Search result pages">
+                <button type="button" className="ghost" onClick={() => setSearchPage((page) => Math.max(1, page - 1))} disabled={searchPage <= 1 || isSearchingAssets}>Previous</button>
+                <span>Page {searchPage} of {searchTotalPages}</span>
+                <button type="button" className="ghost" onClick={() => setSearchPage((page) => Math.min(searchTotalPages, page + 1))} disabled={searchPage >= searchTotalPages || isSearchingAssets}>Next</button>
+              </nav>}
+            </>
           )}
         </section>
       </main>
