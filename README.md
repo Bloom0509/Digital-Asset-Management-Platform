@@ -1,64 +1,55 @@
-# Digital Asset Management System + AI
+# Digital Asset Management
 
-A multi-tenant digital asset management platform with React, Django REST Framework, PostgreSQL, Redis, S3-compatible storage, pgvector, and AI services.
+A multi-tenant digital asset management application with a React frontend and a Django REST API. Users can manage workspaces, upload and organize assets, search asset metadata, review activity, and request AI-generated metadata suggestions.
 
-## Project layout
-- `frontend/` React + TypeScript application
-- `backend/` Django + Django REST Framework API
-- `infra/` local PostgreSQL, Redis, and MinIO services
-- `docs/` architecture and delivery notes
+## Project structure
 
-## Development order
+- `frontend/` — React 19, JavaScript, and Vite
+- `backend/` — Django 5 and Django REST Framework
+- `infra/docker-compose.yml` — PostgreSQL, Redis, and MinIO development services
+- `docs/` — architecture and implementation notes
 
-1. Tenant and user foundations
-2. Asset metadata and upload workflow
-3. S3-compatible storage and APIs
-4. Collections, tags, and search
-5. AI analysis, embeddings, semantic search, RAG, and agents
+## Requirements
 
-## Local services
+- Python 3.10 or newer
+- Node.js and npm
+- PostgreSQL 17, either installed locally or run with Docker Compose
+- Docker Desktop, if using the Compose services
 
-The backend uses PostgreSQL. Redis and MinIO are available for local development through Docker Compose.
+## Quick start (Windows PowerShell)
 
-### Configure PostgreSQL
+### 1. Configure the backend
 
-1. Copy the backend environment template and edit `backend/.env` with your local PostgreSQL credentials:
-
-	```powershell
-	Copy-Item backend/.env.example backend/.env
-	```
-
-	Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, and `POSTGRES_PORT`. For the local PostgreSQL installation, use the role and password configured in pgAdmin. Never commit `backend/.env`.
-
-2. Start PostgreSQL. If you use the Compose PostgreSQL service, run this from the project root after setting the database variables in `backend/.env`:
-
-	```powershell
-	docker compose --env-file backend/.env -f infra/docker-compose.yml up -d postgres
-	```
-
-	Alternatively, start your installed PostgreSQL service. Don’t run both on the same port (5432) at once.
-
-3. Apply the Django schema migrations:
-
-	```powershell
-	cd backend
-	.\.venv\Scripts\python.exe manage.py migrate
-	```
-
-The migrations create the application tables in PostgreSQL; they do not copy records from another database. Uploaded files are stored separately under `backend/media` unless `DAM_MEDIA_ROOT` is configured.
-
-## Frontend
+From the repository root, create the backend environment file and set a local PostgreSQL password:
 
 ```powershell
-cd frontend
-npm run dev
+Copy-Item backend/.env.example backend/.env
 ```
 
-## Backend
+Edit `backend/.env`. Set `POSTGRES_PASSWORD` to a password for the local database. The other PostgreSQL defaults are `DigitalAssetManagement`, `postgres`, `localhost`, and `5432`. Keep this file private; it contains local credentials.
+
+### 2. Start PostgreSQL
+
+To use the Compose PostgreSQL service, run this from the repository root:
+
+```powershell
+docker compose --env-file backend/.env -f infra/docker-compose.yml up -d postgres
+```
+
+Alternatively, start a local PostgreSQL 17 server and create the database and role configured in `backend/.env`. Use one PostgreSQL server on port `5432` at a time.
+
+Redis and MinIO are also defined in Compose for development, but the current Django configuration stores uploaded files in local media storage and does not require those services to run:
+
+```powershell
+docker compose --env-file backend/.env -f infra/docker-compose.yml up -d redis minio
+```
+
+### 3. Install and start the backend
+
+In a PowerShell terminal from the repository root:
 
 ```powershell
 cd backend
-Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -66,14 +57,50 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-Before running the backend commands, configure the PostgreSQL variables in `.env` and ensure the PostgreSQL server is running and the configured database exists. `POSTGRES_PASSWORD` is required for the Compose PostgreSQL service. Set `OPENAI_API_KEY` in `.env` to enable AI suggestions.
+The API runs at `http://127.0.0.1:8000/`. The root URL is a health check. Uploaded files are saved under `backend/media/` by default; set `DAM_MEDIA_ROOT` in `backend/.env` to use another local directory. The default upload limit is 50 MiB (`DAM_MAX_UPLOAD_SIZE` is measured in bytes).
 
-## AI-assisted asset creation
+### 4. Install and start the frontend
 
-When a user enters an asset name and type in the custom asset form, the frontend requests AI suggestions from the authenticated backend. The configured OpenAI model generates a suggested filename, alt text, caption, up to five tags, and three original doodle concepts. Users can review and apply the suggestions; a selected doodle can be used as artwork for the asset.
+Open a second terminal from the repository root:
 
-The AI request uses the asset name, type, file extension, and text context supplied by the form. It does not upload or inspect the actual asset file. The backend sanitizes returned SVG drawings to allow only supported vector shapes and attributes before sending them to the frontend.
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-The endpoint is `POST /api/ai/metadata/` and requires authentication. Its JSON request can include `asset_name`, `asset_type`, `file_extension`, and `content_context`. The response returns the generated fields under `suggestions`.
+Vite prints the frontend URL, usually `http://localhost:5173/`. The backend's default CORS configuration allows this origin.
 
-Configure `OPENAI_API_KEY` in `backend/.env` to enable this feature. `AI_MODEL` is optional and defaults to `gpt-4o-mini`; set it to another model supported by your OpenAI project if needed. AI suggestions are unavailable when the key is missing or the provider request fails.
+### 5. Create an account and sign in
+
+Register an account through `POST /api/accounts/register/` with `username`, `email`, and `password` (first and last name are optional). Then obtain a JWT at `POST /api/auth/token/` using the username and password. The authenticated `GET /api/tenants/` endpoint creates a default workspace if the account has no workspace yet.
+
+## AI metadata suggestions
+
+The authenticated endpoint `POST /api/ai/metadata/` generates a suggested filename, alt text, caption, up to five tags, and three SVG drawing concepts. The request may include `asset_name`, `asset_type`, `file_extension`, and `content_context`. The service uses the text supplied by the form; it does not upload or inspect an asset file. Returned SVG drawings are sanitized before they are sent to the frontend.
+
+Set `OPENAI_API_KEY` in `backend/.env` to enable suggestions. `AI_MODEL` is optional and defaults to `gpt-4o-mini`. Suggestions return an error if the key is missing or the provider request fails.
+
+## Current implementation notes
+
+- Search supports keyword matching across asset metadata, filtering, sorting, and pagination. Semantic search, RAG, and AI agents are not currently exposed as working application features.
+- The Compose file uses a pgvector-enabled PostgreSQL image, but that does not by itself mean every vector-related feature is configured or active.
+- Uploaded assets use Django's local media storage by default. Redis and MinIO are available as optional local services, but the current backend does not require them.
+- `frontend/README.md` contains frontend-specific setup notes.
+
+## Useful commands
+
+Apply backend migrations after updating the code:
+
+```powershell
+cd backend
+python manage.py migrate
+```
+
+Frontend production build and lint:
+
+```powershell
+cd frontend
+npm run build
+npm run lint
+```
